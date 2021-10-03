@@ -95,7 +95,12 @@ typedef int tid_t;
  */
 struct thread {
 
-	int64_t wakeup_tick;				// 노트. thread마다 깨어나야 할 tick에 대한 저장 변수 필요 및 추가 (프로젝트1에 따른 추가 코드)
+	int64_t wakeup;					// 노트. thread마다 깨어나야 할 tick에 대한 저장 변수 필요 및 추가 (프로젝트1에 따른 추가 코드)
+    int init_priority;         		// 노트. 스레드가 priority 를 양도받았다가 다시 반납할 때 원래의 priority 를 복원할 수 있도록 고유의 priority 값을 저장하는 변수
+    
+    struct lock *wait_on_lock;  	// 노트. 스레드가 현재 얻기 위해 기다리고 있는 lock 으로 스레드는 이 lock 이 release 되기를 기다림
+    struct list donations;      	// 노트. 자신에게 priority 를 나누어준 스레드들의 리스트
+    struct list_elem donation_elem; // 노트. donations 리스트를 관리하기 위한 element 로 thread 구조체의 그냥 elem 과 구분하여 사용
 
 	/* Owned by thread.c. */
 	tid_t tid;                          /* Thread identifier. 고유번호 */
@@ -156,13 +161,12 @@ void do_iret (struct intr_frame *tf);
 
 
 /* Note. 프로젝트 1을 위해 추가된 함수 선언 */
-void update_next_tick_to_awake(int64_t ticks); // Note. Setter - 가장 먼저 일어나야 할 스레드가 일어날 시각을 업데이트
-int64_t get_next_tick_to_awake(void); // Note. Getter - 가장 먼저 일어나야 할 스레드가 일어날 시각을 반환
 void thread_sleep(int64_t ticks); // Note. 스레드를 ticks 시각까지 재우는 함수
-void thread_awake(int64_t wakeup_tick); // Note. 일어나야 할 ticks 시각이 되면 스레드를 깨우는 함수
+void thread_awake(int64_t ticks); // Note. 일어나야 할 ticks 시각이 되면 스레드를 깨우는 함수
 
 /* 노트. Priority Scheduling을 위해 추가된 함수 */
 bool thread_compare_priority(struct list_elem *add_elem, struct list_elem *position_elem, void *aux UNUSED);
 void thread_test_preemption (void);
+void donate_priority (void);
 
 #endif /* threads/thread.h */

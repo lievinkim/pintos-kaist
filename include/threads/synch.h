@@ -40,8 +40,12 @@ void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
 
 /* 노트. Priority Scheduling을 위해 추가된 함수 */
-bool
-sema_compare_priority(const struct list_elem *add_elem, const struct list_elem *position_elem, void *aux UNUSED);
+bool sema_compare_priority(const struct list_elem *add_elem, const struct list_elem *position_elem, void *aux UNUSED);
+
+/* 노트. Priority Scheduling을 위해 추가된 함수 */
+bool thread_compare_donate_priority (const struct list_elem *add_elem, const struct list_elem *position_elem, void *aux UNUSED);
+void remove_with_lock (struct lock *lock);
+void refresh_priority (void);
 
 /* Optimization barrier.
  *

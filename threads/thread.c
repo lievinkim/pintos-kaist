@@ -27,7 +27,6 @@
 
 /* 노트. 프로젝트 1을 위해 추가된 구조체 */
 static struct list sleep_list; // 잠자고 있는 애들에 대한 정보 저장
-static int64_t next_tick_to_awake; // 잠자고 있는 애들 중 가장 먼저 일어나야 하는 친구의 시간 정보 저장
 
 
 /* List of processes in THREAD_READY state, that is, processes
@@ -359,10 +358,15 @@ thread_yield (void) {
 	intr_set_level (old_level);
 }
 
+/* 노트. 현재 진행 중인 스레드의 priority가 변경 되는 경우, donations 리스트에 있는 애들 보다 높아질 수 있음 
+ * 이때는 새로 바뀐 priority가 적용될 수 있도록 조치해야 함
+ */
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	thread_current ()->init_priority = new_priority;
+
+	refresh_priority ();
 	thread_test_preemption ();
 }
 
@@ -461,6 +465,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
+
+	/* 노트. Priority Scheduling에 따른 초기화 코드 추가 */
+	t->init_priority = priority;
+	t->wait_on_lock = NULL;
+	list_init (&t->donations);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -641,24 +650,9 @@ allocate_tid (void) {
 	return tid;
 }
 
-
-
-/* Note. 프로젝트 1을 위해 추가된 함수 정의 */
-// Note. Setter - 가장 먼저 일어나야 할 스레드의 시간 정보를 업데이트
-void update_next_tick_to_awake(int64_t ticks)
-{
-	// Note. next_tick_to_awake가 ticks 보다 이후면 ticks를 반환하고 전이면 next_tick_to_awake를 반환
-	next_tick_to_awake = (next_tick_to_awake > ticks) ? ticks : next_tick_to_awake;
-}
-
-// Note. Getter - 가장 먼저 일어나야 할 스레드가 일어날 시각을 반환
-int64_t get_next_tick_to_awake(void)
-{	
-	return next_tick_to_awake;
-}
-
 // Note. 스레드를 ticks 시각까지 재우는 함수
-void thread_sleep(int64_t ticks)
+void
+thread_sleep (int64_t ticks)
 {
 	struct thread *cur;
 
@@ -671,7 +665,7 @@ void thread_sleep(int64_t ticks)
 	ASSERT(cur != idle_thread);
 
 	// Note. 스레드가 일어나야 하는 tick 값을 업데이트 (이때 awake 함수가 깨워줌)
-	update_next_tick_to_awake(cur->wakeup_tick = ticks);
+	cur->wakeup = ticks;
 
 	// Note. 현재 스레드를 슬립 큐에 삽입한 후 스케줄
 	list_push_back(&sleep_list, &cur->elem);
@@ -684,23 +678,22 @@ void thread_sleep(int64_t ticks)
 }
 
 // Note. ticks가 되면 자고 있는 스레드를 깨우는 함수
-void thread_awake(int64_t wakeup_tick)
+void thread_awake(int64_t ticks)
 {
-	next_tick_to_awake = INT16_MAX;
-	struct list_elem *e = list_begin(&sleep_list);
+	struct list_elem *e = list_begin (&sleep_list);
+
 	while (e != list_end(&sleep_list))
 	{
-		struct thread*t = list_entry(e, struct thread, elem);
+		struct thread *t = list_entry(e, struct thread, elem);
 
-		if (wakeup_tick >= t->wakeup_tick)
+		if (t->wakeup <= ticks)
 		{
-			e = list_remove(&t->elem);
+			e = list_remove(e);
 			thread_unblock(t);
 		}
 		else
 		{
 			e = list_next(e);
-			update_next_tick_to_awake(t->wakeup_tick);
 		}
 	}
 }
@@ -723,4 +716,30 @@ thread_test_preemption (void)
 	{
 		thread_yield();
 	}
+}
+
+/* 노트. Priority Scheduling에 따른 함수 추가 */
+bool
+thread_compare_donate_priority (const struct list_elem *add_elem, 
+				const struct list_elem *position_elem, void *aux UNUSED)
+{
+	return list_entry (add_elem, struct thread, donation_elem)->priority
+		 > list_entry (position_elem, struct thread, donation_elem)->priority;
+}
+
+/* 노트. Priority Scheduling에 따른 함수 추가 */
+void
+donate_priority (void)
+{
+  int depth; // nested의 최대 깊이 지정 (max_depth = 8)
+  struct thread *cur = thread_current ();
+
+  for (depth = 0; depth < 8; depth++)
+  {
+	// wait_on_lock이 null이 아니라면 스레드에 lock이 걸려 있다는 뜻으로 holder 스레드에게 priority 양도
+    if (!cur->wait_on_lock) break;
+      struct thread *holder = cur->wait_on_lock->holder;
+      holder->priority = cur->priority;
+      cur = holder;
+  }
 }
