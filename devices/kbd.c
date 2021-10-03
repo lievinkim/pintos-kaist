@@ -25,6 +25,7 @@ static int64_t key_cnt;
 
 static intr_handler_func keyboard_interrupt;
 
+/* 키보드 초기화 함수 */
 /* Initializes the keyboard. */
 void
 kbd_init (void) {

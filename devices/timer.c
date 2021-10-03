@@ -29,6 +29,7 @@ static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 
+/* 노트. 타이머 초기화 함수 */
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
    corresponding interrupt. */
@@ -36,13 +37,13 @@ void
 timer_init (void) {
 	/* 8254 input frequency divided by TIMER_FREQ, rounded to
 	   nearest. */
-	uint16_t count = (1193180 + TIMER_FREQ / 2) / TIMER_FREQ;
+	uint16_t count = (1193180 + TIMER_FREQ / 2) / TIMER_FREQ; // 노트. 타이머 역할 하는 count 선언 및 초기화
 
 	outb (0x43, 0x34);    /* CW: counter 0, LSB then MSB, mode 2, binary. */
 	outb (0x40, count & 0xff);
 	outb (0x40, count >> 8);
 
-	intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+	intr_register_ext (0x20, timer_interrupt, "8254 Timer"); // 노트. 인터럽트를 본격적으로 처리하는 함수
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -82,19 +83,25 @@ timer_ticks (void) {
 
 /* Returns the number of timer ticks elapsed since THEN, which
    should be a value once returned by timer_ticks(). */
+// Note. timer_sleep() 함수가 호출된 시점에서 몇 tick이 지났는 지 반환하는 함수이다.
 int64_t
 timer_elapsed (int64_t then) {
 	return timer_ticks () - then;
 }
 
 /* Suspends execution for approximately TICKS timer ticks. */
+// Note. 현재 스레드를 ticks 시간 동안 잠을 재우는 함수이다.
+// Note. tick(틱)은 1초에 100에 해당하는 시간 단위로 하드웨어에 달린 타이머에 의해 증가한다.
+
 void
 timer_sleep (int64_t ticks) {
-	int64_t start = timer_ticks ();
+	int64_t start = timer_ticks (); // 잠자기 시작한 시간을 start에 저장
 
 	ASSERT (intr_get_level () == INTR_ON);
-	while (timer_elapsed (start) < ticks)
-		thread_yield ();
+
+	thread_sleep(start + ticks);
+	// while (timer_elapsed (start) < ticks) // Note. start 이후 경과한 시간을 저장하고 깨어날 시간과 비교
+	// thread_yield (); // Note. 아직 깨어날 시간이 아니면 ready list에 있는 다른 스레드를 위해 CPU 점유 반환하고 ready list 뒤로 이동 (1 tick마다 반복)
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -126,6 +133,11 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
+
+	if(get_next_tick_to_awake() <= ticks)
+	{
+		thread_awake(ticks);
+	}
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer

@@ -159,6 +159,19 @@ intr_disable (void) {
 	return old_level;
 }
 
+/*
+ * 노트. 내부 인터럽트와 외부 인터럽트
+ * 내부 인터럽트 (= 트랩, SW 인터럽트)
+ * - CPU에 의해 발생하는 인터럽트 (시스템 호출, 비유효 메모리 접근, 0으로 나누기 등)
+ * - 동기(Synchronous) = CPU 동작과 인터럽트 발생이 서로 인과관계가 있음을 의미
+ * 
+ * 외부 인터럽트 (= I/O 인터럽트)
+ * - 오류가 아닌 시스템 제어를 커널로 넘기기 위한 수단으로 사용
+ * - 비동기(Asynchronous) = CPU 동작과 인터럽트 발생의 인과관계가 없음을 의미
+ * - 외부 인터럽트 처리 중간에 멈췄다가 나중에 다시 시작(sleep/yield) 불가능 -> 가능한 빠르게 처리
+ */
+
+
 /* Initializes the interrupt system. */
 void
 intr_init (void) {
@@ -167,6 +180,12 @@ intr_init (void) {
 	/* Initialize interrupt controller. */
 	pic_init ();
 
+	/*
+	* 노트. IDT(Interrupt Descriptor Table)
+	* - 인터럽트 256개에 관한 Descriptor(설명, 처리방법)가 모여 있는 곳
+	* - intr_stubs[i]는 값이 초기화 되어 있는 배열
+	* - idt[i]는 초기화 하려는 배열
+	*/
 	/* Initialize IDT. */
 	for (i = 0; i < INTR_CNT; i++) {
 		make_intr_gate(&idt[i], intr_stubs[i], 0);
@@ -324,6 +343,10 @@ pic_end_of_interrupt (int irq) {
 }
 /* Interrupt handlers. */
 
+/* 
+ * 노트. 256개의 인터럽트 중 번호를 받아 해당 인터럽트 처리 함수를 실행
+ * - intr_frame : 스택 포인터
+ */ 
 /* Handler for all interrupts, faults, and exceptions.  This
    function is called by the assembly language interrupt stubs in
    intr-stubs.S.  FRAME describes the interrupt and the
@@ -333,6 +356,12 @@ intr_handler (struct intr_frame *frame) {
 	bool external;
 	intr_handler_func *handler;
 
+	/* 
+	* 노트.
+	* - 0x20 ~ 0x30 사이에 있으면 외부 인터럽트에 해당
+	* - in_external_intr : 외부 인터럽트인지 여부 확인
+	* - yield_on_return : 현재 실행 프레스가 CPU 뺏을지 여부 확인 (외부 인터럽트 처리 중일 때는 false)
+	*/ 
 	/* External interrupts are special.
 	   We only handle one at a time (so interrupts must be off)
 	   and they need to be acknowledged on the PIC (see below).
@@ -346,6 +375,11 @@ intr_handler (struct intr_frame *frame) {
 		yield_on_return = false;
 	}
 
+	/* 
+	 * 노트.
+	 * 해당되는 인터럽트의 함수를 호출하여 처리
+	 * 케이스 1의 경우에는 타이머 인터럽트 함수 실행
+	 */
 	/* Invoke the interrupt's handler. */
 	handler = intr_handlers[frame->vec_no];
 	if (handler != NULL)
@@ -361,6 +395,13 @@ intr_handler (struct intr_frame *frame) {
 		PANIC ("Unexpected interrupt");
 	}
 
+	/* 
+	 * 노트. 처리 완료후 해당 인터럽트가 외부 인터럽트였을 때 동작하는 부분
+	 * - in_external_intr는 false로 변경 (끝났기 때문)
+	 * - pic_end_of_interrupt() : 외부 인터럽트를 넣은 장치에 처리가 완료되었음을 알림
+	 * - handler() 함수를 통해 실행된 타이머 인터럽트 함수가 끝날 때 "yield_on_return < -1"을 리턴 (= T로 바뀌면 실행 프로세스 CPU를 뺏음)
+	 * - thread_yield() 함수를 통해 (실행 -> 준비로 변경)
+	 */
 	/* Complete the processing of an external interrupt. */
 	if (external) {
 		ASSERT (intr_get_level () == INTR_OFF);

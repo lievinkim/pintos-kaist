@@ -24,6 +24,12 @@
    Do not modify this value. */
 #define THREAD_BASIC 0xd42df210
 
+
+/* 노트. 프로젝트 1을 위해 추가된 구조체 */
+static struct list sleep_list; // 잠자고 있는 애들에 대한 정보 저장
+static int64_t next_tick_to_awake; // 잠자고 있는 애들 중 가장 먼저 일어나야 하는 친구의 시간 정보 저장
+
+
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -94,7 +100,12 @@ static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
    finishes. */
 void
 thread_init (void) {
-	ASSERT (intr_get_level () == INTR_OFF);
+
+	/* 
+	 * 노트. Assert 함수는 값이 False이면 시스템을 종료함 (= kernel panic 상태)
+	 * inter_get_level 함수는 iterrupt가 꺼져 있는 지 확인하는 함수 (현재는 부팅단계라 꺼져 있어야 함)
+	 */
+	ASSERT (intr_get_level () == INTR_OFF); 
 
 	/* Reload the temporal gdt for the kernel
 	 * This gdt does not include the user context.
@@ -106,29 +117,45 @@ thread_init (void) {
 	lgdt (&gdt_ds);
 
 	/* Init the globla thread context */
-	lock_init (&tid_lock);
-	list_init (&ready_list);
+	lock_init (&tid_lock);					// 노트. tid_lock 초기화
+	list_init (&ready_list);				// 노트. 레디 큐 초기화
 	list_init (&destruction_req);
+	list_init (&sleep_list); 				// 노트. sleep_list를 사용하기 위한 초기화 코드 추가 (프로젝트1에 따른 추가 코드)
 
 	/* Set up a thread structure for the running thread. */
-	initial_thread = running_thread ();
-	init_thread (initial_thread, "main", PRI_DEFAULT);
-	initial_thread->status = THREAD_RUNNING;
-	initial_thread->tid = allocate_tid ();
+	initial_thread = running_thread (); 					// 노트. PCB 초기화 값의 시작 주소를 리턴 (= tid 값)
+	init_thread (initial_thread, "main", PRI_DEFAULT); 		// 노트. 우선순위 부여 (0~63, default: 31)
+	initial_thread->status = THREAD_RUNNING;				// 노트. PCB 상태를 의미하며 running 상태로 전환
+	initial_thread->tid = allocate_tid ();					// 노트. tid값 + 1
+
+	/*
+	 * 노트. PCB(프로세스 제어 블록, Process Control Block)는 특정한 프로세스를 관리할 필요가 있는 정보를 포함하는 운영 체제 커널의 자료 구조 (= TCB)
+	 */
 }
 
+/* 노트. 스레드 시작 함수 */
 /* Starts preemptive thread scheduling by enabling interrupts.
    Also creates the idle thread. */
 void
 thread_start (void) {
+
+	/*
+	 * 노트.
+	 * thread_create() : 새 스레드 생성시 꼭 사용
+	 * PRI_MIN : 우선순위 가장 낮음 (= 0)
+	 * idle : 지금 만드는 새 스레드가 수행할 함수
+	 * &idle_started : 위 함수에 대한 파라미터
+	 */
 	/* Create the idle thread. */
 	struct semaphore idle_started;
 	sema_init (&idle_started, 0);
 	thread_create ("idle", PRI_MIN, idle, &idle_started);
 
+	/* 노트. 인터럽트 시작함수로 케이스 1의 경우 타이머가 시작됨 */
 	/* Start preemptive thread scheduling. */
 	intr_enable ();
 
+	/* 노트. 쓰레드 교환(실행 -> 대기) */
 	/* Wait for the idle thread to initialize idle_thread. */
 	sema_down (&idle_started);
 }
@@ -161,6 +188,12 @@ thread_print_stats (void) {
 			idle_ticks, kernel_ticks, user_ticks);
 }
 
+/*
+ * 노트. 스레드 생성 함수가 하는 일
+ *	- 스레드 할당과 초기화
+ * 	- switch_threads()와 kernel_thread()를 위한 가짜 스택 프레임 생성
+ */
+
 /* Creates a new kernel thread named NAME with the given initial
    PRIORITY, which executes FUNCTION passing AUX as the argument,
    and adds it to the ready queue.  Returns the thread identifier
@@ -182,17 +215,20 @@ thread_create (const char *name, int priority,
 	struct thread *t;
 	tid_t tid;
 
-	ASSERT (function != NULL);
+	ASSERT (function != NULL); // 노트. function을 전달 받지 못하면 ASSERT
 
+	/* 노트. 첫 번째 하는 일 - 스레드 할당하는 부분 */
 	/* Allocate thread. */
 	t = palloc_get_page (PAL_ZERO);
 	if (t == NULL)
 		return TID_ERROR;
 
+	/* 노트. PCB의 스택에 새로운 스레드의 초기값 삽입 - 스택 초기화 */
 	/* Initialize thread. */
 	init_thread (t, name, priority);
 	tid = t->tid = allocate_tid ();
 
+	/* 노트. 두 번째 하는 일 - 커널 스레드를 위한 스택 프레임 (스레드 교환 할 때 필요) */
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
 	t->tf.rip = (uintptr_t) kernel_thread;
@@ -204,8 +240,10 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	/* 노트. 스레드 최초 실행 시에는 프로세스 대기 상태, 즉 레디 큐에 넣어야 함 */
 	/* Add to run queue. */
 	thread_unblock (t);
+	thread_test_preemption ();
 
 	return tid;
 }
@@ -240,7 +278,13 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	
+	/* 노트. Priority Scheduling에 따른 push 함수 변경 */
+	// 최초 버전
+	// list_push_back (&ready_list, &t->elem); // 노트. ready_list에 스레드 추가
+	// 추가 버전
+	list_insert_ordered (&ready_list, &t->elem, thread_compare_priority, 0);
+	
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -303,7 +347,14 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+	{
+		/* 노트. Priority Scheduling에 따른 push 함수 변경 */
+		// 최초 버전
+		// list_push_back (&ready_list, &curr->elem); // 노트. ready_list에 스레드 추가
+		// 추가 버전
+		list_insert_ordered (&ready_list, &curr->elem, thread_compare_priority, 0);
+	}
+		
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -312,6 +363,7 @@ thread_yield (void) {
 void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
+	thread_test_preemption ();
 }
 
 /* Returns the current thread's priority. */
@@ -587,4 +639,88 @@ allocate_tid (void) {
 	lock_release (&tid_lock);
 
 	return tid;
+}
+
+
+
+/* Note. 프로젝트 1을 위해 추가된 함수 정의 */
+// Note. Setter - 가장 먼저 일어나야 할 스레드의 시간 정보를 업데이트
+void update_next_tick_to_awake(int64_t ticks)
+{
+	// Note. next_tick_to_awake가 ticks 보다 이후면 ticks를 반환하고 전이면 next_tick_to_awake를 반환
+	next_tick_to_awake = (next_tick_to_awake > ticks) ? ticks : next_tick_to_awake;
+}
+
+// Note. Getter - 가장 먼저 일어나야 할 스레드가 일어날 시각을 반환
+int64_t get_next_tick_to_awake(void)
+{	
+	return next_tick_to_awake;
+}
+
+// Note. 스레드를 ticks 시각까지 재우는 함수
+void thread_sleep(int64_t ticks)
+{
+	struct thread *cur;
+
+	// Note. 인터럽트를 금지하고, 이전의 인터럽트 레벨을 저장
+	enum intr_level old_level;
+	old_level = intr_disable();
+
+	// Note. 현재 스레드 정보를 저장하고, cur이 idle 스레드이면 슬립되지 않게 조치
+	cur = thread_current();
+	ASSERT(cur != idle_thread);
+
+	// Note. 스레드가 일어나야 하는 tick 값을 업데이트 (이때 awake 함수가 깨워줌)
+	update_next_tick_to_awake(cur->wakeup_tick = ticks);
+
+	// Note. 현재 스레드를 슬립 큐에 삽입한 후 스케줄
+	list_push_back(&sleep_list, &cur->elem);
+
+	// Note. 큐에 삽인한 후 스레드를 블락하고 다음 스케줄 있을 때까지 블락된 상태로 대기
+	thread_block();
+
+	// Note. 인터럽트를 다시 받아들일 수 있도록 수정
+	intr_set_level(old_level);
+}
+
+// Note. ticks가 되면 자고 있는 스레드를 깨우는 함수
+void thread_awake(int64_t wakeup_tick)
+{
+	next_tick_to_awake = INT16_MAX;
+	struct list_elem *e = list_begin(&sleep_list);
+	while (e != list_end(&sleep_list))
+	{
+		struct thread*t = list_entry(e, struct thread, elem);
+
+		if (wakeup_tick >= t->wakeup_tick)
+		{
+			e = list_remove(&t->elem);
+			thread_unblock(t);
+		}
+		else
+		{
+			e = list_next(e);
+			update_next_tick_to_awake(t->wakeup_tick);
+		}
+	}
+}
+
+// 노트. Priority Scheduling에 따른 추가 함수
+bool
+thread_compare_priority(struct list_elem *add_elem, struct list_elem *position_elem, void *aux UNUSED)
+{
+	return list_entry (add_elem, struct thread, elem)->priority
+			> list_entry (position_elem, struct thread, elem)->priority;
+}
+
+// 노트. Priority Scheduling에 따른 추가 함수
+void
+thread_test_preemption (void)
+{
+	if (!list_empty (&ready_list) &&
+	thread_current ()->priority <
+	list_entry (list_front (&ready_list), struct thread, elem)->priority)
+	{
+		thread_yield();
+	}
 }

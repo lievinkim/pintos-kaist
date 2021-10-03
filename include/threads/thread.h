@@ -85,12 +85,23 @@ typedef int tid_t;
  * only because they are mutually exclusive: only a thread in the
  * ready state is on the run queue, whereas only a thread in the
  * blocked state is on a semaphore wait list. */
+
+/*
+ * 노트. thread 하나 생성시 구조체 4kb가 하나씩 생성
+ * 구조체에서 tid부터 magic까지의 구간이 스레드의 PCB에 해당 (0kb ~ magic)
+ * 4kb에서 PCB를 뺀 나머지는 kernel stack(해당 스레드 실행하며 사용할 스택 공간)임
+ * 스택 공간에 데이터가 쌓이다가 size가 초과되면 magic으로 넘어가서 오버플로우 감시 (magic의 역할)
+ * thread 구조체 = PCB + Kernel Stack
+ */
 struct thread {
+
+	int64_t wakeup_tick;				// 노트. thread마다 깨어나야 할 tick에 대한 저장 변수 필요 및 추가 (프로젝트1에 따른 추가 코드)
+
 	/* Owned by thread.c. */
-	tid_t tid;                          /* Thread identifier. */
-	enum thread_status status;          /* Thread state. */
-	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* Priority. */
+	tid_t tid;                          /* Thread identifier. 고유번호 */
+	enum thread_status status;          /* Thread state. 스레드 상태 */
+	char name[16];                      /* Name (for debugging purposes). 스레드 명 */
+	int priority;                       /* Priority. 우선순위 저장 */
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
@@ -142,5 +153,16 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+
+/* Note. 프로젝트 1을 위해 추가된 함수 선언 */
+void update_next_tick_to_awake(int64_t ticks); // Note. Setter - 가장 먼저 일어나야 할 스레드가 일어날 시각을 업데이트
+int64_t get_next_tick_to_awake(void); // Note. Getter - 가장 먼저 일어나야 할 스레드가 일어날 시각을 반환
+void thread_sleep(int64_t ticks); // Note. 스레드를 ticks 시각까지 재우는 함수
+void thread_awake(int64_t wakeup_tick); // Note. 일어나야 할 ticks 시각이 되면 스레드를 깨우는 함수
+
+/* 노트. Priority Scheduling을 위해 추가된 함수 */
+bool thread_compare_priority(struct list_elem *add_elem, struct list_elem *position_elem, void *aux UNUSED);
+void thread_test_preemption (void);
 
 #endif /* threads/thread.h */

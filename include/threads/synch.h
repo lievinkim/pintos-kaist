@@ -2,6 +2,7 @@
 #define THREADS_SYNCH_H
 
 #include <list.h>
+#include <debug.h>
 #include <stdbool.h>
 
 /* A counting semaphore. */
@@ -37,6 +38,10 @@ void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
+
+/* 노트. Priority Scheduling을 위해 추가된 함수 */
+bool
+sema_compare_priority(const struct list_elem *add_elem, const struct list_elem *position_elem, void *aux UNUSED);
 
 /* Optimization barrier.
  *
