@@ -28,6 +28,14 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+/* 노트. Advanced Scheduling에 따른 추가된 정의 */            
+#define NICE_DEFAULT 0
+#define RECENT_CPU_DEFAULT 0
+#define LOAD_AVG_DEFAULT 0
+
+/* 노트. Advanced Scheduling에 따른 추가된 구조체 */
+static struct list all_list;
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -102,6 +110,12 @@ struct thread {
     struct list donations;      	// 노트. 자신에게 priority 를 나누어준 스레드들의 리스트
     struct list_elem donation_elem; // 노트. donations 리스트를 관리하기 위한 element 로 thread 구조체의 그냥 elem 과 구분하여 사용
 
+	/* 노트. Advanced Scheduling에 따른 변수 추가
+	 * nice, recent_cpu 담을 변수 추가
+	 */
+	int nice;
+	int recent_cpu;
+
 	/* Owned by thread.c. */
 	tid_t tid;                          /* Thread identifier. 고유번호 */
 	enum thread_status status;          /* Thread state. 스레드 상태 */
@@ -123,6 +137,9 @@ struct thread {
 	/* Owned by thread.c. */
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
+
+	/* 노트. Advanced Scheduling에 따른 추가된 구조체 */
+	struct list_elem allelem;			/* all_list element. */
 };
 
 /* If false (default), use round-robin scheduler.
@@ -168,5 +185,14 @@ void thread_awake(int64_t ticks); // Note. 일어나야 할 ticks 시각이 되�
 bool thread_compare_priority(struct list_elem *add_elem, struct list_elem *position_elem, void *aux UNUSED);
 void thread_test_preemption (void);
 void donate_priority (void);
+
+/* 노트. Advanced Scheduling을 위해 추가된 함수 */
+void mlfqs_calculate_priority (struct thread *t);	// 특정 thread의 prioirity 계산
+void mlfqs_calculate_recent_cpu (struct thread *t);	//스레드의 recent_cpu 계산하는 함수
+void mlfqs_calculate_load_avg (void); // load_avg 값을 계산
+
+void mlfqs_increment_recent_cpu (void);	// 현재 스레드의 recent_cpu 값을 1 증가시킴
+void mlfds_recalculate_recent_cpu (void);	// 모든 스레드의 recent_cpu 를 재계산 하는 함수
+void mlfqs_recalculate_priority (void);	//모든 스레드의 priority 재계산
 
 #endif /* threads/thread.h */

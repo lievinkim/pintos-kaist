@@ -133,6 +133,29 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
+
+	/*
+	 * 노트. Advanced Scheduling에 따른 코드 추가
+	 * - 현재 스레드의 recent_cpu 의 값을 1 증가시키는 함수
+	 * - 모든 스레드의 recent_cpu 를 재계산 하는 함수
+	 * - 모든 스레드의 priority 를 재계산 하는 함수
+	 * 
+	 * 각 함수를 해당하는 시간 주기마다 실행되도록 timer_interrupt 함수 수정
+	 */
+	if (thread_mlfqs) // mlfqs 옵션이 들어왔을 때에만 advanced scheduler 가 작동할 수 있도록 if 문으로 묶고 각 시간에 맞게 priority, recent_cpu, load_avg 값의 조정 실행
+	{
+		mlfqs_increment_recent_cpu ();
+		if (ticks % 4 == 0)
+		{
+			mlfqs_recalculate_priority ();
+			if (ticks % TIMER_FREQ == 0) // TIMER_FREQ 값은 1초에 몇 개의 ticks 이 실행되는지를 나타내는 값으로 thread.h 에 100 으로 정의
+			{
+				mlfqs_recalculate_recent_cpu ();
+				mlfqs_calculate_load_avg ();
+			}
+		}
+	}
+
 	thread_awake (ticks);
 }
 

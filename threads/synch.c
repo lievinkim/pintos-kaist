@@ -204,6 +204,15 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	/* Advanced Scheduling에 따라 thread_mlfqs 조건 추가 */
+	/* priority donation 을 mlfqs 에서는 비활성화 */
+	if (thread_mlfqs)
+	{
+    	sema_down (&lock->semaphore);
+    	lock->holder = thread_current ();
+    	return;
+  	}
+
 	struct thread *cur = thread_current ();
 	if (lock->holder) { // 현재 lock을 소유하고 있는 스레드를 의미하고 있으면 donate 진행 없을 경우 넘어간다. 해당 코드가 실행된다는 것 자체는 우선순위가 높다는 의미로 별도로 비교하지 않음
 		cur->wait_on_lock = lock;  // 현재 스레드의 wait_on_lock 리스트에 해당 lock 추가
@@ -215,7 +224,7 @@ lock_acquire (struct lock *lock) {
 	}
 
 	sema_down (&lock->semaphore);
-	
+
 	cur->wait_on_lock = NULL;
  	lock->holder = cur;
 }
@@ -250,11 +259,21 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
+	/* Advanced Scheduling에 따라 thread_mlfqs 조건 추가 */
+	/* priority donation 을 mlfqs 에서는 비활성화 */
+	lock->holder = NULL;
+	if (thread_mlfqs)
+	{
+    	sema_up (&lock->semaphore);
+    	return ;
+  	}
+
 	remove_with_lock (lock);
   	refresh_priority ();
 
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
+
 }
 
 /* Returns true if the current thread holds LOCK, false
