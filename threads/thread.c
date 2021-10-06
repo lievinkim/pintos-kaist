@@ -30,6 +30,8 @@
 /* 노트. 프로젝트 1을 위해 추가된 구조체 */
 static struct list sleep_list; // 잠자고 있는 애들에 대한 정보 저장
 
+/* 노트. Advanced Scheduling에 따른 추가된 구조체 */
+static struct list all_list;
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
@@ -401,6 +403,11 @@ thread_get_priority (void) {
 void
 thread_set_nice (int nice UNUSED) // 현재 스레드의 nice 값을 새 값으로 설정
 { 	
+	// 노트. git 보고 추가한 부분
+	ASSERT (nice >= NICE_MIN);
+	ASSERT (nice <= NICE_MAX);
+	ASSERT (thread_current () != idle_thread);
+
 	enum intr_level old_level = intr_disable ();
 	thread_current ()->nice = nice;
 	mlfqs_calculate_priority (thread_current ());
@@ -760,12 +767,39 @@ thread_compare_priority(struct list_elem *add_elem, struct list_elem *position_e
 void
 thread_test_preemption (void)
 {
-	if (!list_empty (&ready_list) &&
-	thread_current ()->priority <
-	list_entry (list_front (&ready_list), struct thread, elem)->priority)
+	if(list_empty(&ready_list))
 	{
-		thread_yield();
+		return;
 	}
+
+	struct thread *t = list_entry (list_front (&ready_list), struct thread, elem);
+
+	if(intr_context())
+	{
+		thread_ticks++;
+		if (thread_ticks >= TIME_SLICE && thread_current()->priority == t->priority)
+		{
+      		intr_yield_on_return();
+      		return;
+    	}
+	}
+	else {
+		if(thread_current()->priority < t->priority)
+		{
+			thread_yield();
+		}
+	}
+
+
+
+
+
+	// if (!intr_context() && !list_empty (&ready_list) &&
+	// thread_current ()->priority <
+	// list_entry (list_front (&ready_list), struct thread, elem)->priority)
+	// {
+	// 	thread_yield();
+	// }
 }
 
 /* 노트. Priority Scheduling에 따른 함수 추가 */
@@ -830,15 +864,18 @@ mlfqs_calculate_recent_cpu (struct thread *t)
 void 
 mlfqs_calculate_load_avg (void) 
 {
-  int ready_threads;
-  
-  if (thread_current () == idle_thread)
-    ready_threads = list_size (&ready_list);
-  else
-    ready_threads = list_size (&ready_list) + 1;
+	int ready_threads;
+	
+	if (thread_current () == idle_thread)
+		ready_threads = list_size (&ready_list);
+	else
+		ready_threads = list_size (&ready_list) + 1;
 
-  load_avg = add_fp (mult_fp (div_fp (int_to_fp (59), int_to_fp (60)), load_avg), 
-                     mult_mixed (div_fp (int_to_fp (1), int_to_fp (60)), ready_threads));
+	load_avg = add_fp (mult_fp (div_fp (int_to_fp (59), int_to_fp (60)), load_avg), 
+						mult_mixed (div_fp (int_to_fp (1), int_to_fp (60)), ready_threads));
+
+	// 노트. git 보고 추가한 부분
+	ASSERT(load_avg>=0);
 }
 
 /* 노트. Advanced Scheduling에 따른 함수 추가

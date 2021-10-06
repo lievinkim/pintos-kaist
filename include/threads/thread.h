@@ -29,12 +29,13 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 /* 노트. Advanced Scheduling에 따른 추가된 정의 */            
-#define NICE_DEFAULT 0
 #define RECENT_CPU_DEFAULT 0
 #define LOAD_AVG_DEFAULT 0
+#define NICE_MIN -20
+#define NICE_DEFAULT 0
+#define NICE_MAX 20
 
-/* 노트. Advanced Scheduling에 따른 추가된 구조체 */
-static struct list all_list;
+
 
 /* A kernel thread or user process.
  *
