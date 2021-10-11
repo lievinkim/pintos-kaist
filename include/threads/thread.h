@@ -117,6 +117,11 @@ struct thread {
 	int nice;
 	int recent_cpu;
 
+	/* Project 2 */
+	/* 2-3 exit syscall */
+	int exit_status;					// used to deliver child exit_status to parent
+
+
 	/* Owned by thread.c. */
 	tid_t tid;                          /* Thread identifier. 고유번호 */
 	enum thread_status status;          /* Thread state. 스레드 상태 */

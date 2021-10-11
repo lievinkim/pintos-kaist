@@ -11,6 +11,11 @@
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
+void check_address(uaddr);
+void halt(void);
+void exit(int status);
+int write(int fd, const void *buffer, unsigned size);
+
 /* System call.
  *
  * Previously system call services was handled by the interrupt handler
@@ -23,6 +28,8 @@ void syscall_handler (struct intr_frame *);
 #define MSR_STAR 0xc0000081         /* Segment selector msr */
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
+
+
 
 void
 syscall_init (void) {
@@ -39,8 +46,64 @@ syscall_init (void) {
 
 /* The main system call interface */
 void
-syscall_handler (struct intr_frame *f UNUSED) {
+syscall_handler (struct intr_frame *f) {
 	// TODO: Your implementation goes here.
+
 	printf ("system call!\n");
-	thread_exit ();
+
+	switch (f->R.rax)
+	{
+	case SYS_HALT:
+		halt();
+		break;
+	case SYS_EXIT:
+		exit(f->R.rdi);
+		break;
+	case SYS_WRITE:
+		f->R.rax = write(f->R.rdi, (char *) f->R.rsi, f->R.rdx);
+		break;
+	default:
+		break;
+	}
+	
+	// thread_exit ();
 }
+
+/* P2-2. Check Address */
+// 1. Null pointer
+// 2. A pointer to kernel virtual address space (above KERN_BASE)
+// 3. A pointer to unmapped virtual memory (causes page_fault)
+void check_address(const uint64_t *uaddr)
+{
+	struct thread *cur = thread_current();
+	if (uaddr == NULL || !(is_user_vaddr(uaddr)) || pml4_get_page(cur->pml4, uaddr) == NULL)
+	{
+		exit(-1);
+	}
+}
+
+/* P2-2. Syscalls */
+/* Terminates PintOS by calling power_off(). No return */
+void halt(void)
+{
+	power_off();
+}
+
+/* End current thread, record exit status. No return. */
+void exit(int status)
+{
+	struct thread *cur = thread_current();
+	cur->exit_status = status; // thread 구조체에 exit_status 추가
+
+	printf("%s: exit(%d)\n", thread_name(), status); 
+	thread_exit();
+}
+
+/* Writes size bytes from buffer to the open file fd. */
+/* Returns the number of bytes actually written, or -1 if the file could not be written */
+int write(int fd, const void *buffer, unsigned size)
+{
+	putbuf(buffer, size);
+	return size;
+}
+
