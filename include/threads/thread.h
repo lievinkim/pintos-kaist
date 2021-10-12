@@ -130,11 +130,13 @@ struct thread {
 	/* Proj 2-3. fork syscall */
 	struct intr_frame parent_if; 		// 노트. fork 시, child 프로세스에게 현재 나의 intr_frame 정보를 전달하기 위함 (child 입장에서는 parent_if)
 	struct list child_list; 			// 노트. 자신에게 fork 된 child 프로세스들의 리스트
-	struct list child_elem; 			// 노트. child 프로세스 리스트를 관리하기 위해 별도로 구분한 element
+	struct list_elem child_elem; 			// 노트. child 프로세스 리스트를 관리하기 위해 별도로 구분한 element
 	struct semaphore fork_sema; 		// 노트. child fork가 __do_fork, 즉 fork를 완료할 때까지 기다리기 위한 sema
 
-
-	// struct semaphore free_sema; 		// 노트. parent가 wait 함수에서 exit_status 값을 받을 때까지 child 프로세스 종료 연기
+	/* Proj 2-3. wait syscall */
+	struct semaphore wait_sema;			// 노트. child 프로세스를 기다리기 위해 사용
+	int exit_status;					// 노트. child 프로세스의 exit 상태를 parent에 전달하기 위함
+	struct semaphore free_sema; 		// 노트. parent가 wait 함수에서 exit_status 값을 받을 때까지 child 프로세스 종료 연기
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */

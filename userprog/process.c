@@ -90,13 +90,19 @@ initd (void *f_name) {
 tid_t
 process_fork (const char *name, struct intr_frame *if_) {
 
-	/* Proj 2-2. fork syscall */
+	/* Proj 2-3. fork syscall */
 	/* Clone current thread to new thread.*/
 	struct thread *cur = thread_current(); 							// 노트. 현재 스레드 구조체 가져오기 (부모 스레드)
 	memcpy(&cur->parent_if, if_, sizeof(struct intr_frame));		// 노트. 현재 스레드 parent_if에 값 저장 (부모 스레드) -> 향후 해당 정보를 child에 전달
 
 	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, cur);   // 노트. child 프로세스 스레드 생성 (__do_fork 함수 실행 및 cur를 인자로 전달)
 	if (tid == TID_ERROR)
+		return TID_ERROR;
+
+	/* Proj 2-3. wait syscall */
+	struct thread *child = get_child_with_pid(tid);					// 노트. tid로 child 스레드 정보 가져오기
+	sema_down(&child->fork_sema); 									// 노트. child가 로드 될 때까지 대기 (로드 되면 sema_up을 차일드가 해줌)
+	if (child->exit_status == -1)									// 노트. 만약 가져온 child의 exit_status 값이 -1이라면 에러
 		return TID_ERROR;
 
 	return tid;
@@ -116,7 +122,7 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
 	if (is_kernel_vaddr(va))
 	{
-		return true; 										// false 리턴 시 pml4_for_each가 종료되기 때문에 true를 통해 해당 커널 va 전달
+		return true; 										// 노트. false 리턴 시 pml4_for_each가 종료되기 때문에 true를 통해 해당 커널 va 전달
 	}
 	else
 	{
@@ -136,7 +142,7 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 #ifdef DEBUG
 		printf("[fork-duplicate] pass at step 1 %llx\n", va);
 #endif	
-		return false;										// parent_page가 Null인 경우 false 리턴
+		return false;										// 노트. parent_page가 Null인 경우 false 리턴
 	}
 
 #ifdef DEBUG
@@ -155,14 +161,14 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 #ifdef DEBUG
 		printf("[fork-duplicate] failed to palloc new page\n");
 #endif	
-		return false;										// newpage가 Null인 경우 false 리턴
+		return false;										// 노트. newpage가 Null인 경우 false 리턴
 	}
 
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
-	memcpy(newpage, parent_page, PGSIZE);					// parent_page를 newpage에 복사
-	writable = is_writable(pte); 							// *PTE is an address that points to parent_page
+	memcpy(newpage, parent_page, PGSIZE);					// 노트. parent_page를 newpage에 복사
+	writable = is_writable(pte); 							// 노트. *PTE is an address that points to parent_page
 
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
@@ -199,14 +205,14 @@ __do_fork (void *aux) {
 	struct intr_frame *parent_if;
 
 	/* Proj 2-3. fork syscall */
-	parent_if = &parent->parent_if; 						// 새로 만든 intr_frame 구조체에 부모의 parent_if 값 저장
+	parent_if = &parent->parent_if; 						// 노트. 새로 만든 intr_frame 구조체에 부모의 parent_if 값 저장
 	
 	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
 	/* Proj 2-3. fork syscall */	
-	if_.R.rax = 0; 											// fork 시 child의 리턴 값을 0으로 세팅
+	if_.R.rax = 0; 											// 노트. fork 시 child의 리턴 값을 0으로 세팅
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -229,19 +235,22 @@ __do_fork (void *aux) {
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
-	process_init ();										// 현재까지 큰 의미는 없어 보이는 함수
+	process_init ();										// 노트. 현재까지 큰 의미는 없어 보이는 함수
 	
 	/* Proj 2-3. fork syscall */
-	sema_up(&current->fork_sema); 							// child load 성공 및 fork 작업 끝났음을 부모에게 전달
+	sema_up(&current->fork_sema); 							// 노트. child load 성공 및 fork 작업 끝났음을 부모에게 전달
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
 		do_iret (&if_);
 error:
 
+	/* Proj 2-3. wait syscall */
+	current->exit_status = TID_ERROR;						// 노트. 생성 실패 시에는 exit_status에 오류 값을 넣어주고 바로 전달
+	
 	/* Proj 2-3. fork syscall */
-	sema_up(&current->fork_sema); 							// child load 실패 및 fork 작업 끝났음을 부모에게 전달
-	exit(TID_ERROR);										// TID_ERROR 전달
+	sema_up(&current->fork_sema); 							// 노트. child load 실패 및 fork 작업 끝났음을 부모에게 전달
+	exit(TID_ERROR);										// 노트. TID_ERROR 전달
 	// thread_exit ();
 }
 
@@ -300,7 +309,8 @@ process_exec (void *f_name) {
 	_if.R.rdi = argc; // 결과물 저장 (rdi에 인자 개수)
 	_if.R.rsi = (uint64_t)*rspp + sizeof(void *); // 결과물 저장 (rsi에 argv[0] 값 저장 주소 포인터)
 
-	hex_dump(_if.rsp, _if.rsp, USER_STACK - (uint64_t)*rspp, true); // 디버깅을 위한 장치
+	/* Proj 2-1. Debugging */
+	// hex_dump(_if.rsp, _if.rsp, USER_STACK - (uint64_t)*rspp, true);
 	palloc_free_page(file_name);
 
 	/* Start switched process. */
@@ -378,22 +388,53 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	// for (int i = 0; i < 1000000000; i++); // 임시방편용
+	
+	/* Proj 2-2. wait syscall */
+	struct thread *cur = thread_current(); 					// 노트. 현재 실행 중인 스레드 가져오기 (부모 스레드)
+	struct thread *child = get_child_with_pid(child_tid);	// 노트. get_child_with_pid 통해 child 스레드 가져오기
 
-	for (int i = 0; i < 1000000000; i++);
+	if (child == NULL)										// 노트. get_child_with_pid 통해 못 가져온 경우 (내 child가 아님)
+		return -1;
 
-	return -1;
+	sema_down(&child->wait_sema); 							// 노트. child 프로세스가 실행 후 sema_up 할 때까지 기다림
+	int exit_status = child->exit_status; 					// 노트. child 프로세스 종료 후의 exit_status 값 저장
+
+	list_remove(&child->child_elem);						// 노트. child 리스트에서 child 삭제
+	sema_up(&child->free_sema);								// 노트. child 회수 (wake-up child in process_exit - proceed with thread_exit)
+
+	return exit_status;
+}
+
+/* 전달 받은 pid로 child_list에서 child를 찾고 해당 스레드 전달 */
+struct thread *get_child_with_pid(int pid)
+{
+	struct thread *cur = thread_current();					// 노트. 현재 실행 중인 스레드 가져오기 (부모 스레드)
+	struct list *child_list = &cur->child_list;				// 노트. 현재 실행 중인 스레드의 child_list 가져오기
+
+	for (struct list_elem *e = list_begin(child_list); e != list_end(child_list); e = list_next(e))		// 노트. 탐색 시작
+	{
+		struct thread *t = list_entry(e, struct thread, child_elem);									// 노트. child_elem 통해 스레드 정보 가져오기
+		if (t->tid == pid)																				// 노트. 가져온 스레드의 tid 값이 pid와 동일한지 확인 (동일하면 child)
+			return t;
+	}
+	return NULL;																						// 노트. pid와 동일한 t를 못 찾은 경우 NULL 리턴
 }
 
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {
-	struct thread *curr = thread_current ();
+	struct thread *cur = thread_current ();
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
 	process_cleanup ();
+
+	/* Proj 2-3. wait syscall */
+	sema_up(&cur->wait_sema);					// 대기 중인(blocked) 부모 프로세스가 깨어날 수 있도록 함
+	sema_down(&cur->free_sema);					// 부모 프로세스가 exit_status 값을 가질 때까지 child 프로세스 종료 지연 
 }
 
 /* Free the current process's resources. */
