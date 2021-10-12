@@ -5,6 +5,10 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+
+/* Proj 2-2. synch header added */
+#include "threads/synch.h"
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -104,12 +108,18 @@ typedef int tid_t;
  */
 struct thread {
 
-	int64_t wakeup;					// 노트. thread마다 깨어나야 할 tick에 대한 저장 변수 필요 및 추가 (프로젝트1에 따른 추가 코드)
-    int init_priority;         		// 노트. 스레드가 priority 를 양도받았다가 다시 반납할 때 원래의 priority 를 복원할 수 있도록 고유의 priority 값을 저장하는 변수
+	/* Owned by thread.c. */
+	tid_t tid;                          /* Thread identifier. 고유번호 */
+	enum thread_status status;          /* Thread state. 스레드 상태 */
+	char name[16];                      /* Name (for debugging purposes). 스레드 명 */
+	int priority;                       /* Priority. 우선순위 저장 */
+
+	int64_t wakeup;						// 노트. thread마다 깨어나야 할 tick에 대한 저장 변수 필요 및 추가 (프로젝트1에 따른 추가 코드)
+    int init_priority;         			// 노트. 스레드가 priority 를 양도받았다가 다시 반납할 때 원래의 priority 를 복원할 수 있도록 고유의 priority 값을 저장하는 변수
     
-    struct lock *wait_on_lock;  	// 노트. 스레드가 현재 얻기 위해 기다리고 있는 lock 으로 스레드는 이 lock 이 release 되기를 기다림
-    struct list donations;      	// 노트. 자신에게 priority 를 나누어준 스레드들의 리스트
-    struct list_elem donation_elem; // 노트. donations 리스트를 관리하기 위한 element 로 thread 구조체의 그냥 elem 과 구분하여 사용
+    struct lock *wait_on_lock;  		// 노트. 스레드가 현재 얻기 위해 기다리고 있는 lock 으로 스레드는 이 lock 이 release 되기를 기다림
+    struct list donations;      		// 노트. 자신에게 priority 를 나누어준 스레드들의 리스트
+    struct list_elem donation_elem; 	// 노트. donations 리스트를 관리하기 위한 element 로 thread 구조체의 그냥 elem 과 구분하여 사용
 
 	/* 노트. Advanced Scheduling에 따른 변수 추가
 	 * nice, recent_cpu 담을 변수 추가
@@ -117,11 +127,14 @@ struct thread {
 	int nice;
 	int recent_cpu;
 
-	/* Owned by thread.c. */
-	tid_t tid;                          /* Thread identifier. 고유번호 */
-	enum thread_status status;          /* Thread state. 스레드 상태 */
-	char name[16];                      /* Name (for debugging purposes). 스레드 명 */
-	int priority;                       /* Priority. 우선순위 저장 */
+	/* Proj 2-3. fork syscall */
+	struct intr_frame parent_if; 		// 노트. fork 시, child 프로세스에게 현재 나의 intr_frame 정보를 전달하기 위함 (child 입장에서는 parent_if)
+	struct list child_list; 			// 노트. 자신에게 fork 된 child 프로세스들의 리스트
+	struct list child_elem; 			// 노트. child 프로세스 리스트를 관리하기 위해 별도로 구분한 element
+	struct semaphore fork_sema; 		// 노트. child fork가 __do_fork, 즉 fork를 완료할 때까지 기다리기 위한 sema
+
+
+	// struct semaphore free_sema; 		// 노트. parent가 wait 함수에서 exit_status 값을 받을 때까지 child 프로세스 종료 연기
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */

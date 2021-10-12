@@ -88,10 +88,18 @@ initd (void *f_name) {
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
-process_fork (const char *name, struct intr_frame *if_ UNUSED) {
+process_fork (const char *name, struct intr_frame *if_) {
+
+	/* Proj 2-2. fork syscall */
 	/* Clone current thread to new thread.*/
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+	struct thread *cur = thread_current(); 							// 노트. 현재 스레드 구조체 가져오기 (부모 스레드)
+	memcpy(&cur->parent_if, if_, sizeof(struct intr_frame));		// 노트. 현재 스레드 parent_if에 값 저장 (부모 스레드) -> 향후 해당 정보를 child에 전달
+
+	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, cur);   // 노트. child 프로세스 스레드 생성 (__do_fork 함수 실행 및 cur를 인자로 전달)
+	if (tid == TID_ERROR)
+		return TID_ERROR;
+
+	return tid;
 }
 
 #ifndef VM
@@ -106,22 +114,74 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
+	if (is_kernel_vaddr(va))
+	{
+		return true; 										// false 리턴 시 pml4_for_each가 종료되기 때문에 true를 통해 해당 커널 va 전달
+	}
+	else
+	{
+#ifdef DEBUG
+		printf("[fork-duplicate] pass at step 1 %llx\n", va);
+#endif		
+	}
+
+#ifdef DEBUG
+	printf("Is user %d, is kernel %d, writable %d\n", is_user_pte(pte), is_kern_pte(pte), is_writable(pte));
+#endif
 
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page (parent->pml4, va);
+	if (parent_page == NULL)
+	{
+#ifdef DEBUG
+		printf("[fork-duplicate] pass at step 1 %llx\n", va);
+#endif	
+		return false;										// parent_page가 Null인 경우 false 리턴
+	}
+
+#ifdef DEBUG
+	/* page table, virtual address 이해하기 */
+	/* pte는 하나의 page table entry를 포인팅 하는 주소를 의미함 */
+	/* *pte = page table entry = address of the physical frame */
+	void *test = ptov(PTE_ADDR(*pte)) + pg_ofs(va); 	// should be same as parent_page -> Yes!
+	uint64_t va_offset = pg_ofs(va);					// should be 0; va comes from PTE, so there must be no 12bit physical offset
+#endif
 
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
+	newpage = palloc_get_page(PAL_USER);
+	if (newpage == NULL)
+	{
+#ifdef DEBUG
+		printf("[fork-duplicate] failed to palloc new page\n");
+#endif	
+		return false;										// newpage가 Null인 경우 false 리턴
+	}
 
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
+	memcpy(newpage, parent_page, PGSIZE);					// parent_page를 newpage에 복사
+	writable = is_writable(pte); 							// *PTE is an address that points to parent_page
 
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
 		/* 6. TODO: if fail to insert page, do error handling. */
+#ifdef DEBUG
+		printf("Failed to map user virtual page to given physical frame\n"); // #ifdef DEBUG
+#endif
+		return false;
 	}
+
+#ifdef DEBUG
+	/* 'va'가 newpage에 잘 맞게 맵핑 되었는지 확인 */
+	if (pml4_get_page(current->pml4, va) != newpage)
+		printf("Not mapped!"); // never called
+
+	printf("--Completed copy--\n");
+#endif
+
 	return true;
 }
 #endif
@@ -137,10 +197,16 @@ __do_fork (void *aux) {
 	struct thread *current = thread_current ();
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
 	struct intr_frame *parent_if;
+
+	/* Proj 2-3. fork syscall */
+	parent_if = &parent->parent_if; 						// 새로 만든 intr_frame 구조체에 부모의 parent_if 값 저장
+	
 	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
+	/* Proj 2-3. fork syscall */	
+	if_.R.rax = 0; 											// fork 시 child의 리턴 값을 0으로 세팅
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -163,13 +229,20 @@ __do_fork (void *aux) {
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
-	process_init ();
+	process_init ();										// 현재까지 큰 의미는 없어 보이는 함수
+	
+	/* Proj 2-3. fork syscall */
+	sema_up(&current->fork_sema); 							// child load 성공 및 fork 작업 끝났음을 부모에게 전달
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
 		do_iret (&if_);
 error:
-	thread_exit ();
+
+	/* Proj 2-3. fork syscall */
+	sema_up(&current->fork_sema); 							// child load 실패 및 fork 작업 끝났음을 부모에게 전달
+	exit(TID_ERROR);										// TID_ERROR 전달
+	// thread_exit ();
 }
 
 /* Switch the current execution context to the f_name.

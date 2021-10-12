@@ -122,11 +122,12 @@ thread_init (void) {
 	};
 	lgdt (&gdt_ds);
 
-	/* Init the globla thread context */
+	/* Init the globlal thread context */
 	lock_init (&tid_lock);					// 노트. tid_lock 초기화
-	list_init (&ready_list);				// 노트. 레디 큐 초기화
 	list_init (&destruction_req);
+
 	list_init (&sleep_list); 				// 노트. sleep_list를 사용하기 위한 초기화 코드 추가 (프로젝트1에 따른 추가 코드)
+	list_init (&ready_list);				// 노트. 레디 큐 초기화
 	list_init (&all_list);					// 노트. Advanced Scheduling에 따른 코드 추가
 
 	/* Set up a thread structure for the running thread. */
@@ -237,6 +238,10 @@ thread_create (const char *name, int priority,
 	/* Initialize thread. */
 	init_thread (t, name, priority);
 	tid = t->tid = allocate_tid ();
+
+	/* Proj 2-3. fork syscall */
+	struct thread *cur = thread_current();
+	list_push_back(&cur->child_list, &t->child_elem); // 부모의 child_list에 자식의 child_elem을 넣음
 
 	/* 노트. 두 번째 하는 일 - 커널 스레드를 위한 스택 프레임 (스레드 교환 할 때 필요) */
 	/* Call the kernel_thread if it scheduled.
@@ -527,6 +532,10 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->nice = NICE_DEFAULT;
 	t->recent_cpu = RECENT_CPU_DEFAULT;
 	list_push_back(&all_list, &t->allelem);
+
+	/* Proj 2-3. fork syscall */
+	list_init(&t->child_list);
+	sema_init(&t->fork_sema, 0);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

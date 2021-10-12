@@ -8,6 +8,10 @@
 #include "threads/flags.h"
 #include "intrinsic.h"
 
+/* Proj 2-3. syscalls */
+#include "threads/vaddr.h" 					// check_address
+#include "userprog/process.h"				// process_fork
+
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
@@ -15,6 +19,7 @@ void syscall_handler (struct intr_frame *);
 void halt(void);
 void exit(int status);
 int write(int fd, const void *buffer, unsigned size);
+tid_t fork(const char *thread_name, struct intr_frame *f);
 void check_address(uaddr);
 
 /* System call.
@@ -57,6 +62,9 @@ syscall_handler (struct intr_frame *f) {
 	case SYS_EXIT:
 		exit(f->R.rdi);
 		break;
+	case SYS_FORK:
+		f->R.rax = fork(f->R.rdi, f);
+		break;
 	case SYS_WRITE:
 		f->R.rax = write(f->R.rdi, (char *) f->R.rsi, f->R.rdx);
 		break;
@@ -84,6 +92,15 @@ int write(int fd, const void *buffer, unsigned size) {
 	putbuf(buffer, size);
 	return 0;
 }
+
+/* (parent) Returns pid of child on success or -1 on fail */
+/* (child) Returns 0 */
+tid_t fork(const char *thread_name, struct intr_frame *f)
+{
+	return process_fork(thread_name, f);
+}
+
+
 
 /* P2-2. Check Address */
 // 1. Null pointer
