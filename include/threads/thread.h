@@ -138,6 +138,10 @@ struct thread {
 	int exit_status;					// 노트. child 프로세스의 exit 상태를 parent에 전달하기 위함
 	struct semaphore free_sema; 		// 노트. parent가 wait 함수에서 exit_status 값을 받을 때까지 child 프로세스 종료 연기
 
+	/* Proj 2-4. file descripter */
+	struct file **fdTable; 				// thread_create에서 할당 (thread.c)
+	int fdIdx; 							// fdTable에서 오픈 지점의 인덱스를 뜻함
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
@@ -203,12 +207,16 @@ void thread_test_preemption (void);
 void donate_priority (void);
 
 /* 노트. Advanced Scheduling을 위해 추가된 함수 */
-void mlfqs_calculate_priority (struct thread *t);	// 특정 thread의 prioirity 계산
-void mlfqs_calculate_recent_cpu (struct thread *t);	//스레드의 recent_cpu 계산하는 함수
-void mlfqs_calculate_load_avg (void); // load_avg 값을 계산
+void mlfqs_calculate_priority (struct thread *t);		// 특정 thread의 prioirity 계산
+void mlfqs_calculate_recent_cpu (struct thread *t);		//스레드의 recent_cpu 계산하는 함수
+void mlfqs_calculate_load_avg (void); 					// load_avg 값을 계산
 
-void mlfqs_increment_recent_cpu (void);	// 현재 스레드의 recent_cpu 값을 1 증가시킴
-void mlfds_recalculate_recent_cpu (void);	// 모든 스레드의 recent_cpu 를 재계산 하는 함수
-void mlfqs_recalculate_priority (void);	//모든 스레드의 priority 재계산
+void mlfqs_increment_recent_cpu (void);					// 현재 스레드의 recent_cpu 값을 1 증가시킴
+void mlfds_recalculate_recent_cpu (void);				// 모든 스레드의 recent_cpu 를 재계산 하는 함수
+void mlfqs_recalculate_priority (void);					//모든 스레드의 priority 재계산
+
+/* Proj 2-4. file descriptor */
+#define FDT_PAGES 3						  				// pages to allocate for file descriptor tables (thread_create, process_exit)
+#define FDCOUNT_LIMIT FDT_PAGES *(1 << 9) 				// Limit fdIdx
 
 #endif /* threads/thread.h */

@@ -237,6 +237,13 @@ thread_create (const char *name, int priority,
 	/* 노트. PCB의 스택에 새로운 스레드의 초기값 삽입 - 스택 초기화 */
 	/* Initialize thread. */
 	init_thread (t, name, priority);
+	
+	/* Proj 2-4. file descriptor */
+	t->fdTable = palloc_get_multiple(PAL_ZERO, FDT_PAGES);	// FDT_PAGE 크기만 할당하고 0으로 세팅
+	if (t->fdTable == NULL)
+		return TID_ERROR;
+	t->fdIdx = 2; 											// 0은 stdin, 1은 stdout이기 때문
+
 	tid = t->tid = allocate_tid ();
 
 	/* Proj 2-3. fork syscall */

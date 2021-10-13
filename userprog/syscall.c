@@ -13,6 +13,10 @@
 #include "userprog/process.h"				// process_fork, process_exit
 #include "threads/palloc.h"					// PAL_ZERO
 
+/* Proj 2-4. file descriptor */
+#include "filesys/filesys.h"
+#include "filesys/file.h"
+
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
@@ -24,6 +28,17 @@ tid_t fork(const char *thread_name, struct intr_frame *f);
 int wait(tid_t child_tid);
 int exec(char *file_name);
 void check_address(uaddr);
+
+bool create(const char *file, unsigned initial_size);
+bool remove(const char *file);
+int open(const char *file);
+int filesize(int fd);
+int read(int fd, void *buffer, unsigned size);
+void seek(int fd, unsigned position);
+unsigned tell(int fd);
+
+int add_file_to_fdt(struct file *file);
+static struct file *find_file_by_fd(int fd);
 
 /* System call.
  *
@@ -49,6 +64,9 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+
+	/* Proj 2-4. file descriptor - race condition을 막기 위한 장치 */
+	lock_init(&file_rw_lock);
 }
 
 /* The main system call interface */
@@ -75,8 +93,29 @@ syscall_handler (struct intr_frame *f) {
 	case SYS_WAIT:
 		f->R.rax = wait(f->R.rdi);
 		break;
+	case SYS_CREATE:
+		f->R.rax = create(f->R.rdi, f->R.rsi);
+		break;
+	case SYS_REMOVE:
+		f->R.rax = remove(f->R.rdi);
+		break;
+	case SYS_OPEN:
+		f->R.rax = open(f->R.rdi);
+		break;
+	case SYS_FILESIZE:
+		f->R.rax = filesize(f->R.rdi);
+		break;
+	case SYS_READ:
+		f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
+		break;
 	case SYS_WRITE:
 		f->R.rax = write(f->R.rdi, (char *) f->R.rsi, f->R.rdx);
+		break;
+	case SYS_SEEK:
+		seek(f->R.rdi, f->R.rsi);
+		break;
+	case SYS_TELL:
+		f->R.rax = tell(f->R.rdi);
 		break;
 	default:
 		break;
@@ -105,8 +144,31 @@ void exit(int status) {
 /* Writes size bytes from buffer to the open file fd. */
 /* Returns the number of bytes actually written, or -1 if the file could not be written */
 int write(int fd, const void *buffer, unsigned size) {
-	putbuf(buffer, size);
-	return 0;
+	check_address(buffer);
+	int ret;
+	
+	if (fd == 1)												// fd가 1, 즉, STDOUT이 들어왔을 때 바로 출력
+	{
+		putbuf(buffer, size);
+		ret = size;
+	}
+	else if (fd == 0)											// fd가 0, 즉, STDIN이 들어왔을 때 -1로 넘김
+	{
+		ret = -1;
+	}
+	else
+	{	
+		struct thread *cur = thread_current();					// 현재 실행 중인 구조체 정보 가져오기
+		struct file *fileobj = find_file_by_fd(fd);				// fd 정보를 통해 file 객체 가져오기
+		if (fileobj == NULL)
+			return -1;
+
+		lock_acquire(&file_rw_lock);							// 글로벌 read/write lock acquire
+		ret = file_write(fileobj, buffer, size);				// file system 함수 활용하여 쓰기 진행
+		lock_release(&file_rw_lock);							// 글로벌 read/write lcok release
+	}
+
+	return ret;
 }
 /* (parent) Returns pid of child on success or -1 on fail */
 /* (child) Returns 0 */
@@ -145,7 +207,6 @@ int exec(char *file_name)
 
 
 
-
 /* P2-2. Check Address */
 // 1. Null pointer
 // 2. A pointer to kernel virtual address space (above KERN_BASE)
@@ -158,3 +219,121 @@ void check_address(const uint64_t *uaddr) {
 	}
 }
 
+
+
+/* Proj 2-4. file descriptor 함수 */
+// Creates a new file called file initially initial_size bytes in size.
+// Returns true if successful, false otherwise
+bool create(const char *file, unsigned initial_size) {
+	check_address(file);
+	return filesys_create(file, initial_size); // file system 함수 활용하여 생성
+}
+// Deletes the file called 'file'. Returns true if successful, false otherwise.
+bool remove(const char *file) {
+	check_address(file);
+	return filesys_remove(file); // file system 함수 활용하여 삭제
+}
+// Opens the file called file, returns fd or -1 (if file could not be opened for some reason)
+int open(const char *file) {
+	check_address(file);
+	struct file *fileobj = filesys_open(file);  // file system 함수 활용하여 open
+
+	if (fileobj == NULL) 						// obj 생성 여부 확인
+		return -1;
+
+	int fd = add_file_to_fdt(fileobj); 			// 생성된 obj는 프로세스의 fdt에 추가 및 fd 리턴 받음
+
+	if (fd == -1)								// fdt가 가득 찼는지 여부 확인
+		file_close(fileobj);
+
+	return fd;
+}
+// Returns the size, in bytes, of the file open as fd.
+int filesize(int fd) {
+	struct file *fileobj = find_file_by_fd(fd);
+	if (fileobj == NULL)
+		return -1;
+	return file_length(fileobj);
+}
+// Reads size bytes from the file open as fd into buffer.
+// Returns the number of bytes actually read (0 at end of file), or -1 if the file could not be read
+int read(int fd, void *buffer, unsigned size)
+{
+	check_address(buffer);
+	int ret;
+
+	if (fd == 0)											// fd가 0, 즉 STDIN이 들어올 때 바로 읽기
+	{
+		int i;
+		unsigned char *buf = buffer;
+		for (i = 0; i < size; i++)
+		{
+			char c = input_getc();
+			*buf++ = c;
+			if (c == '\0')
+				break;
+		}
+		ret = i;
+	}
+	else if (fd == 1)										// fd가 1, 즉 STDOUT이 들어올 때 -1로 넘김
+	{
+		ret = -1;
+	}
+	else													// fd가 0, 1 외에 값이 들어올 때
+	{
+		struct thread *cur = thread_current();				// 현재 실행 중인 구조체 정보 가져오기
+		struct file *fileobj = find_file_by_fd(fd);			// fd 정보를 통해 file 객체 가져오기
+		if (fileobj == NULL)
+			return -1;
+
+		lock_acquire(&file_rw_lock);						// 글로벌 read/write lock acquire
+		ret = file_read(fileobj, buffer, size);				// file system 함수 활용하여 읽기 진행
+		lock_release(&file_rw_lock);						// 글로벌 read/write lcok release
+	}
+	return ret;
+}
+// Changes the next byte to be read or written in open file fd to position,
+// expressed in bytes from the beginning of the file (Thus, a position of 0 is the file's start).
+void seek(int fd, unsigned position)
+{
+	struct file *fileobj = find_file_by_fd(fd);
+	if (fileobj <= 2)
+		return;
+	fileobj->pos = position;
+}
+// Returns the position of the next byte to be read or written in open file fd, expressed in bytes from the beginning of the file.
+unsigned tell(int fd)
+{
+	struct file *fileobj = find_file_by_fd(fd);
+	if (fileobj <= 2)
+		return;
+	return file_tell(fileobj);
+}
+
+
+
+/* Proj 2-4. file descriptor 서브 함수 */
+// Find open spot in current thread's fdt and put file in it. Returns the fd.
+int add_file_to_fdt(struct file *file)
+{
+	struct thread *cur = thread_current();			// 현재 실행 중인 스레드 구조체 정보 가져오기
+	struct file **fdt = cur->fdTable; 				// 스레드의 fdTable을 입력
+
+	// Error - fdt full
+	if (cur->fdIdx >= FDCOUNT_LIMIT)				// FDT에 공간 있는지 확인
+		return -1;
+
+	fdt[cur->fdIdx] = file;							// fdIdx에 file 정보 입력
+	return cur->fdIdx;								// fdIdx 리턴
+}
+// Check if given fd is valid, return cur->fdTable[fd]
+static struct file *find_file_by_fd(int fd)
+{
+	struct thread *cur = thread_current();			// 현재 실행 중인 스레드 구조체 정보 가져오기  
+
+	// Error - invalid fd
+	if (fd < 0 || fd >= FDCOUNT_LIMIT)				// fd 유효성 검사
+		return NULL;
+
+	return cur->fdTable[fd]; 						// file 전송 (만약 비어 있을 경우 자동으로 NULL 리턴)
+}

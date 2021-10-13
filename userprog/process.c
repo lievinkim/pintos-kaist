@@ -430,6 +430,13 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
+	// /* Proj 2-4. file descriptor - 닫는 부분 */
+	// for (int i=0; i<FDCOUNT_LIMIT; i++)
+	// {
+	// 	close(i);
+	// }
+	// palloc_free_page(cur->fdTable);
+
 	process_cleanup ();
 
 	/* Proj 2-3. wait syscall */

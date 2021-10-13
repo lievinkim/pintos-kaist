@@ -2,7 +2,14 @@
 #define FILESYS_FILE_H
 
 #include "filesys/off_t.h"
+#include <list.h>               // bool deny_write; 를 위해 include 함
 
+/* An open file. */
+struct file {
+	struct inode *inode;        /* File's inode. */
+	off_t pos;                  /* Current position. */
+	bool deny_write;            /* Has file_deny_write() been called? */
+};
 struct inode;
 
 /* Opening and closing files. */
