@@ -9,6 +9,9 @@ struct file {
 	struct inode *inode;        /* File's inode. */
 	off_t pos;                  /* Current position. */
 	bool deny_write;            /* Has file_deny_write() been called? */
+
+	/* Proj 2-7. Extra */
+	int dupCount; 				// 얼마나 많은 fd가 해당 파일을 공유하고 있는지 확인 (해당 값이 0일 때만 close 가능)
 };
 struct inode;
 

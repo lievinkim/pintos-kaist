@@ -235,7 +235,57 @@ __do_fork (void *aux) {
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
-	process_init ();										// 노트. 현재까지 큰 의미는 없어 보이는 함수
+	/* Proj2-6. file descriptor */
+	if (parent->fdIdx == FDCOUNT_LIMIT)  	// 제대로 복사되었는지 확인
+		goto error;
+
+	/* Proj 2-7. Extra */
+	/* 같은 파일을 여러 fd들이 공유하는 경우 이러한 관계를 복사하기 위해 associative map 사용 (dict, hashmap 등) */
+	/* multi-oom과 같은 테스트 케이스들은 해당 특징을 필요로 하지 않음 */
+	const int MAPLEN = 10;
+	struct MapElem map[10]; 	// MapElem에는 key와 value 존재 (key-parent's struct file * , value-child's newly created struct file *)
+	int dupCount = 0;			// 맵을 채우기 위한 인덱스 역할
+
+	for (int i = 0; i < FDCOUNT_LIMIT; i++) 			// 복사한 FDT의 크기 만큼 하나씩 살펴보기
+	{
+		struct file *file = parent->fdTable[i];			// 부모의 i번째 인덱스 파일 가져오기
+		if (file == NULL)								// 유효성 체크
+			continue;
+
+		/* Proj 2-7. Extra */
+		/* key-pair 배열에 대한 선형 검색 시작 */
+		/* child에 이미 복사된 'file'이라면, 더 이상 복사하지 않고 공유하는 것이 핵심 */
+		bool found = false;								// map에 있는 지 여부 확인 (기본값 false)
+
+		for (int j = 0; j < MAPLEN; j++)				// 인덱스 0부터 MAPLEN 만큼 loop 진행
+		{
+			if (map[j].key == file)                     // 인덱스 j의 key 값이 file인 경우 (이미 복사된 파일이라는 뜻)
+			{
+				found = true;							// found는 true로 변경
+				current->fdTable[i] = map[j].value;		// 인덱스 j의 value 값을 FDT에 넣어줌
+				break;
+			}
+		}
+
+		if (!found)										// 만약 찾지 못했다면 (복사된 적 없는 파일이라면)
+		{
+			struct file *new_file;						// 복사할 파일을 담을 new_file 변수 생성 
+			if (file > 2)								// i가 2보다 작으면 STDIN, STDOUT이기 때문
+				new_file = file_duplicate(file);		// i가 2보다 큰 경우에는 file system 함수를 활용하여 복사
+			else
+				new_file = file;
+
+			current->fdTable[i] = new_file;				// fork된 child 스레드의 fdt에 추가
+			if (dupCount < MAPLEN)						// 인덱스가 MAPLEN 보다 작다면
+			{
+				map[dupCount].key = file;				// 해당 인덱스의 key 값에 file 넣고
+				map[dupCount++].value = new_file;		// 해당 인덱스의 value 값에 new_file 넣고 1 증가
+			}
+		}		
+	}
+	current->fdIdx = parent->fdIdx;					// child와 부모의 fdIdx 값 동일하게 맞추기 
+
+	// process_init ();										// 노트. 현재까지 큰 의미는 없어 보이는 함수
 	
 	/* Proj 2-3. fork syscall */
 	sema_up(&current->fork_sema); 							// 노트. child load 성공 및 fork 작업 끝났음을 부모에게 전달
@@ -430,12 +480,18 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
-	// /* Proj 2-4. file descriptor - 닫는 부분 */
-	// for (int i=0; i<FDCOUNT_LIMIT; i++)
-	// {
-	// 	close(i);
-	// }
-	// palloc_free_page(cur->fdTable);
+	/* Proj 2-4. file descriptor - 닫는 부분 */
+	for (int i=0; i<FDCOUNT_LIMIT; i++)				// FDCOUNT_LIMIT 만큼 읽고 해당 되는 곳을 하나씩 close
+	{
+		close(i);
+	}
+	// palloc_free_page(cur->fdTable);				// 하나씩 close 후 thread_create에서 할당 받은 페이지 free (FDT 초기화)
+	palloc_free_multiple(cur->fdTable, FDT_PAGES); 	// multi-oom
+
+	/* Proj 2-6. Denying write to executable - 프로세스 종료 시 쓰기 가능 상태로 변경 */
+	/* 예시. 프로세스 시작 시, args-none 파일을 로드 하면서 cur->running에 args-none 추가 */
+	/* 프로세스 종료 시, cur->running에 있던 args-none을 제거 (위에 close는 FDT 파일에 있는 애들이 대상) */  
+	file_close(cur->running);
 
 	process_cleanup ();
 
@@ -567,6 +623,10 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	}
 
+	/* Proj 2-6. Denying write to executable - 로드 시 쓰기 거부 상태로 변경 */
+	t->running = file;
+	file_deny_write(file);
+
 	/* Read and verify executable header. */
 	/* 노트. ELF 파일의 헤더 정보를 읽어와 저장 */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -649,7 +709,7 @@ load (const char *file_name, struct intr_frame *if_) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+	// file_close (file);	// 현재 running 중인 파일은 process exit에서 종료
 	return success;
 }
 

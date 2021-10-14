@@ -239,10 +239,19 @@ thread_create (const char *name, int priority,
 	init_thread (t, name, priority);
 	
 	/* Proj 2-4. file descriptor */
-	t->fdTable = palloc_get_multiple(PAL_ZERO, FDT_PAGES);	// FDT_PAGE 크기만 할당하고 0으로 세팅
+	//t->fdTable = palloc_get_page(PAL_ZERO); 				// 단일 페이지 할당 받고 0으로 초기화
+	t->fdTable = palloc_get_multiple(PAL_ZERO, FDT_PAGES);	// multi-oom : need more pages to accomodate 10 stacks of 126 opens
 	if (t->fdTable == NULL)
 		return TID_ERROR;
 	t->fdIdx = 2; 											// 0은 stdin, 1은 stdout이기 때문
+	
+	t->fdTable[0] = 1; 										// fd가 0일 때의 값을 구분하기 위함 (나머지는 NULL)
+	t->fdTable[1] = 2;	 									// fd가 1일 때의 값을 구분하기 위함 (나머지는 NULL)
+
+	/* Proj 2-7. Extra */
+	/* stdin, stdout count 초기값 설정 */
+	t->stdin_count = 1;
+	t->stdout_count = 1;
 
 	tid = t->tid = allocate_tid ();
 
@@ -547,6 +556,9 @@ init_thread (struct thread *t, const char *name, int priority) {
 	/* Proj 2-3. wait syscall */
 	sema_init(&t->wait_sema, 0);
 	sema_init(&t->free_sema, 0);
+
+	/* Proj 2-6. Denying write to executable */
+	t->running = NULL;	// 구조체 추가에 따른 초기화
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

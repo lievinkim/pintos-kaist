@@ -16,6 +16,12 @@
 /* Proj 2-4. file descriptor */
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include <list.h>
+
+/* Proj 2-7. Extra */
+/* stdin, stdout 상수 선언 */
+const int STDIN = 1;
+const int STDOUT = 2;
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -36,9 +42,14 @@ int filesize(int fd);
 int read(int fd, void *buffer, unsigned size);
 void seek(int fd, unsigned position);
 unsigned tell(int fd);
+void close(int fd);
+
+/* Proj 2-7. Extra */
+int dup2(int oldfd, int newfd);
 
 int add_file_to_fdt(struct file *file);
 static struct file *find_file_by_fd(int fd);
+void remove_file_from_fdt(int fd);
 
 /* System call.
  *
@@ -66,7 +77,7 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 
 	/* Proj 2-4. file descriptor - race condition을 막기 위한 장치 */
-	lock_init(&file_rw_lock);
+	lock_init(&filesys_lock);
 }
 
 /* The main system call interface */
@@ -117,7 +128,14 @@ syscall_handler (struct intr_frame *f) {
 	case SYS_TELL:
 		f->R.rax = tell(f->R.rdi);
 		break;
+	case SYS_CLOSE:
+		close(f->R.rdi);
+		break;
+	case SYS_DUP2:
+		f->R.rax = dup2(f->R.rdi, f->R.rsi);
+		break;
 	default:
+		exit(-1);
 		break;
 	}
 	
@@ -137,7 +155,9 @@ void exit(int status) {
 	/* Proj 2-3. wait syscall */
 	struct thread *cur = thread_current();					// 현재 돌아가는 스레드 정보 가져오기
 	cur->exit_status = status;								// exit_status에 status 값 넣기
-	printf("%s: exit(%d)\n", thread_name(), status);
+
+	/* Proj 2-5. Process Termination Message */ 
+	printf("%s: exit(%d)\n", thread_name(), status);		// exit을 통해 혹은 다른 이유로 사용자 프로세스가 종료되었을 때 프로세스 이름과 exit 코드 출력
 
 	thread_exit();
 }
@@ -146,26 +166,36 @@ void exit(int status) {
 int write(int fd, const void *buffer, unsigned size) {
 	check_address(buffer);
 	int ret;
+
+	struct file *fileobj = find_file_by_fd(fd);				// fd 정보를 통해 file 객체 가져오기
+	if (fileobj == NULL)
+		return -1;
+	struct thread *cur = thread_current();					// 현재 실행 중인 스레드 정보 가져오기
 	
-	if (fd == 1)												// fd가 1, 즉, STDOUT이 들어왔을 때 바로 출력
+	if (fileobj == STDOUT)												// fd가 1(fileobj=2), 즉, STDOUT이 들어왔을 때 바로 출력
 	{
-		putbuf(buffer, size);
-		ret = size;
+		if (cur->stdout_count == 0)										// dup2 대응하기 위함
+		{
+			// Not reachable
+			NOT_REACHED();
+			remove_file_from_fdt(fd);									// 잘못 저장된 파일임으로 삭제 처리
+			ret = -1;			
+		}
+		else
+		{
+			putbuf(buffer, size);
+			ret = size;
+		}
 	}
-	else if (fd == 0)											// fd가 0, 즉, STDIN이 들어왔을 때 -1로 넘김
+	else if (fileobj == STDIN)											// fd가 0(fileobj=1), 즉, STDIN이 들어왔을 때 -1로 넘김
 	{
 		ret = -1;
 	}
 	else
 	{	
-		struct thread *cur = thread_current();					// 현재 실행 중인 구조체 정보 가져오기
-		struct file *fileobj = find_file_by_fd(fd);				// fd 정보를 통해 file 객체 가져오기
-		if (fileobj == NULL)
-			return -1;
-
-		lock_acquire(&file_rw_lock);							// 글로벌 read/write lock acquire
+		lock_acquire(&filesys_lock);							// 글로벌 read/write lock acquire
 		ret = file_write(fileobj, buffer, size);				// file system 함수 활용하여 쓰기 진행
-		lock_release(&file_rw_lock);							// 글로벌 read/write lcok release
+		lock_release(&filesys_lock);							// 글로벌 read/write lcok release
 	}
 
 	return ret;
@@ -262,33 +292,42 @@ int read(int fd, void *buffer, unsigned size)
 	check_address(buffer);
 	int ret;
 
-	if (fd == 0)											// fd가 0, 즉 STDIN이 들어올 때 바로 읽기
+	struct file *fileobj = find_file_by_fd(fd);			// fd 정보를 통해 file 객체 가져오기
+	if (fileobj == NULL)
+		return -1;
+	struct thread *cur = thread_current();				// 현재 실행 중인 스레드 정보 가져오기
+
+	if (fileobj == STDIN)											// fd가 0(fileobj=1), 즉 STDIN이 들어올 때 바로 읽기
 	{
-		int i;
-		unsigned char *buf = buffer;
-		for (i = 0; i < size; i++)
+		if(cur->stdin_count == 0)									// dup2 대응하기 위함
 		{
-			char c = input_getc();
-			*buf++ = c;
-			if (c == '\0')
-				break;
+			// Not reachable
+			NOT_REACHED();
+			remove_file_from_fdt(fd);								// 잘못 저장된 파일임으로 삭제 처리
+			ret = -1;
 		}
-		ret = i;
+		else {
+			int i;
+			unsigned char *buf = buffer;
+			for (i = 0; i < size; i++)
+			{
+				char c = input_getc();
+				*buf++ = c;
+				if (c == '\0')
+					break;
+			}
+			ret = i;
+		}
 	}
-	else if (fd == 1)										// fd가 1, 즉 STDOUT이 들어올 때 -1로 넘김
+	else if (fileobj == STDOUT)										// fd가 1(fileobj=2), 즉 STDOUT이 들어올 때 -1로 넘김
 	{
 		ret = -1;
 	}
 	else													// fd가 0, 1 외에 값이 들어올 때
 	{
-		struct thread *cur = thread_current();				// 현재 실행 중인 구조체 정보 가져오기
-		struct file *fileobj = find_file_by_fd(fd);			// fd 정보를 통해 file 객체 가져오기
-		if (fileobj == NULL)
-			return -1;
-
-		lock_acquire(&file_rw_lock);						// 글로벌 read/write lock acquire
+		lock_acquire(&filesys_lock);						// 글로벌 read/write lock acquire
 		ret = file_read(fileobj, buffer, size);				// file system 함수 활용하여 읽기 진행
-		lock_release(&file_rw_lock);						// 글로벌 read/write lcok release
+		lock_release(&filesys_lock);						// 글로벌 read/write lcok release
 	}
 	return ret;
 }
@@ -309,22 +348,85 @@ unsigned tell(int fd)
 		return;
 	return file_tell(fileobj);
 }
+// Closes file descriptor fd. Ignores NULL file. Returns nothing.
+void close(int fd)
+{
+	struct file *fileobj = find_file_by_fd(fd);					// fd 정보를 통해 file 정보 가져오기
+	if (fileobj == NULL)										// 객체 유효성 검사
+		return;
+	struct thread *cur = thread_current();						// 현재 실행 중인 스레드 정보 가져오기
 
+	/* Proj 2-7. Extra */
+	/* stdin, stdout close 요청 왔을 때 count 1씩 감소 */
+	if (fd == 0 || fileobj == STDIN)
+	{
+		cur->stdin_count--;
+	}
+	else if (fd == 1 || fileobj == STDOUT)
+	{
+		cur->stdout_count--;
+	}
+
+	remove_file_from_fdt(fd);									// fd 정보를 통해 file을 fdt에서 제거
+	if (fd <= 1 || fileobj <= 2)
+		return;
+
+	/* Proj 2-7. Extra */
+	/* dup_Count가 0일 때만 삭제할 수 있으며 1 이상인 경우에는 1씩 감소 */
+	if (fileobj->dupCount == 0)									
+		file_close(fileobj);
+	else
+		fileobj->dupCount--;
+}
+/* Proj 2-7. Extra */
+// Creates 'copy' of oldfd into newfd. If newfd is open, close it. Returns newfd on success, -1 on fail (invalid oldfd)
+// After dup2, oldfd and newfd 'shares' struct file, but closing newfd should not close oldfd (important!)
+int dup2(int oldfd, int newfd)
+{
+	struct file *fileobj = find_file_by_fd(oldfd);			// oldfd에 대한 fileobj 가져오기
+	if (fileobj == NULL)									// 유효성 검사
+		return -1;
+
+	struct file *deadfile = find_file_by_fd(newfd);			// newfd에 대한 fileobj 가져오기
+
+	if (oldfd == newfd)										// oldfd와 newfd가 같을 경우 조치 필요 없음
+		return newfd;
+
+	struct thread *cur = thread_current();					// 현재 실행 중인 스레드 정보 가져오기
+	struct file **fdt = cur->fdTable;						// 실행 중인 스레드의 FDT 정보 가져오기
+
+	// Don't literally copy, but just increase its count and share the same struct file
+	// [syscall close] Only close it when count == 0
+
+	// Copy stdin or stdout to another fd
+	if (fileobj == STDIN)									// 우선 복사하고자 하는 대상을 파악하고 해당 되는 count 1씩 증가
+		cur->stdin_count++;
+	else if (fileobj == STDOUT)
+		cur->stdout_count++;
+	else
+		fileobj->dupCount++;
+
+	close(newfd);											// newfd의 값을 NULL로 초기화
+	fdt[newfd] = fileobj;									// newfd에 복제 대상 대입
+	return newfd;
+}
 
 
 /* Proj 2-4. file descriptor 서브 함수 */
 // Find open spot in current thread's fdt and put file in it. Returns the fd.
 int add_file_to_fdt(struct file *file)
 {
-	struct thread *cur = thread_current();			// 현재 실행 중인 스레드 구조체 정보 가져오기
-	struct file **fdt = cur->fdTable; 				// 스레드의 fdTable을 입력
+	struct thread *cur = thread_current();					// 현재 실행 중인 스레드 구조체 정보 가져오기
+	struct file **fdt = cur->fdTable; 						// 스레드의 fdTable을 입력
 
-	// Error - fdt full
-	if (cur->fdIdx >= FDCOUNT_LIMIT)				// FDT에 공간 있는지 확인
+	while (cur->fdIdx < FDCOUNT_LIMIT && fdt[cur->fdIdx])	// 해당 fdIdx 값이 NULL이 아닌 경우 다음 fdIdx에 추가하기
+		cur->fdIdx++;
+
+	if (cur->fdIdx >= FDCOUNT_LIMIT)						// FDT에 공간 있는지 확인
 		return -1;
 
-	fdt[cur->fdIdx] = file;							// fdIdx에 file 정보 입력
-	return cur->fdIdx;								// fdIdx 리턴
+	fdt[cur->fdIdx] = file;									// fdIdx에 file 정보 입력
+	return cur->fdIdx;										// fdIdx 리턴
 }
 // Check if given fd is valid, return cur->fdTable[fd]
 static struct file *find_file_by_fd(int fd)
@@ -336,4 +438,15 @@ static struct file *find_file_by_fd(int fd)
 		return NULL;
 
 	return cur->fdTable[fd]; 						// file 전송 (만약 비어 있을 경우 자동으로 NULL 리턴)
+}
+// Check for valid fd and do cur->fdTable[fd] = NULL. Returns nothing
+void remove_file_from_fdt(int fd)
+{
+	struct thread *cur = thread_current();			// 현재 실행 중인 스레드 구조체 정보 가져오기
+
+	// Error - invalid fd
+	if (fd < 0 || fd >= FDCOUNT_LIMIT)				// 전달 받은 fd 값 유효성 검사 (should be 0 <= fd < FDCOUNT_LIMIT)
+		return;
+
+	cur->fdTable[fd] = NULL;						// 해당 FDT 값을 NULL로 바꿈
 }

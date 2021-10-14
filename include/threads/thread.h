@@ -142,6 +142,14 @@ struct thread {
 	struct file **fdTable; 				// thread_create에서 할당 (thread.c)
 	int fdIdx; 							// fdTable에서 오픈 지점의 인덱스를 뜻함
 
+	/* Proj 2-6. Denying write to executable */
+	struct file *running; 				// 현재 실행 중인 프로세스가 실행 중인 파일 (process.c의 load와 process_exit 함수 관련)
+
+	/* Proj 2-7. Extra */
+	/* dup2가 stdin, stdout을 복제 할 때마다 조치 및 실제 count가 0일 때만 삭제될 수 있도록 하기 위함*/
+	int stdin_count;
+	int stdout_count; 
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 

@@ -13,6 +13,10 @@ file_open (struct inode *inode) {
 		file->inode = inode;
 		file->pos = 0;
 		file->deny_write = false;
+
+		/* Proj 2-7. Extra */
+		file->dupCount = 0;				// 초기화 (구조체가 변경되면 항상 초기화를!)
+
 		return file;
 	} else {
 		inode_close (inode);
@@ -37,6 +41,9 @@ file_duplicate (struct file *file) {
 		nfile->pos = file->pos;
 		if (file->deny_write)
 			file_deny_write (nfile);
+
+		/* Proj 2-7. Extra - 구조체 변경에 따른 추가된 멤버에 대한 복사 진행 */
+		nfile->dupCount = file->dupCount;
 	}
 	return nfile;
 }
