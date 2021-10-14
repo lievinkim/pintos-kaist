@@ -256,23 +256,41 @@ void check_address(const uint64_t *uaddr) {
 // Returns true if successful, false otherwise
 bool create(const char *file, unsigned initial_size) {
 	check_address(file);
-	return filesys_create(file, initial_size); // file system 함수 활용하여 생성
+	bool success;
+	
+	lock_acquire(&filesys_lock);
+	success = filesys_create(file, initial_size); // file system 함수 활용하여 생성
+	lock_release(&filesys_lock);
+
+	return success;
 }
 // Deletes the file called 'file'. Returns true if successful, false otherwise.
 bool remove(const char *file) {
 	check_address(file);
-	return filesys_remove(file); // file system 함수 활용하여 삭제
+	bool success;
+
+	lock_acquire(&filesys_lock);
+	success = filesys_remove(file); // file system 함수 활용하여 삭제
+	lock_release(&filesys_lock);
+
+	return success;
 }
 // Opens the file called file, returns fd or -1 (if file could not be opened for some reason)
 int open(const char *file) {
 	check_address(file);
-	struct file *fileobj = filesys_open(file);  // file system 함수 활용하여 open
+	struct file *fileobj;
+	
+	lock_acquire(&filesys_lock);
+	fileobj = filesys_open(file);  // file system 함수 활용하여 open
 
-	if (fileobj == NULL) 						// obj 생성 여부 확인
+	if (fileobj == NULL) {	// obj 생성 여부 확인
+		lock_release(&filesys_lock);
 		return -1;
-
+	} 						
+		
 	int fd = add_file_to_fdt(fileobj); 			// 생성된 obj는 프로세스의 fdt에 추가 및 fd 리턴 받음
-
+	lock_release(&filesys_lock);
+	
 	if (fd == -1)								// fdt가 가득 찼는지 여부 확인
 		file_close(fileobj);
 
@@ -335,25 +353,42 @@ int read(int fd, void *buffer, unsigned size)
 // expressed in bytes from the beginning of the file (Thus, a position of 0 is the file's start).
 void seek(int fd, unsigned position)
 {
+	lock_acquire(&filesys_lock);
 	struct file *fileobj = find_file_by_fd(fd);
 	if (fileobj <= 2)
+	{
+		lock_release(&filesys_lock);
 		return;
+	}
 	fileobj->pos = position;
+	lock_release(&filesys_lock);
 }
 // Returns the position of the next byte to be read or written in open file fd, expressed in bytes from the beginning of the file.
 unsigned tell(int fd)
 {
+	unsigned position;
+	lock_acquire(&filesys_lock);
 	struct file *fileobj = find_file_by_fd(fd);
 	if (fileobj <= 2)
+	{
+		lock_release(&filesys_lock);
 		return;
-	return file_tell(fileobj);
+	}
+	position = file_tell(fileobj);
+	lock_release(&filesys_lock);
+
+	return position;
 }
 // Closes file descriptor fd. Ignores NULL file. Returns nothing.
 void close(int fd)
 {
+	lock_acquire(&filesys_lock);
 	struct file *fileobj = find_file_by_fd(fd);					// fd 정보를 통해 file 정보 가져오기
 	if (fileobj == NULL)										// 객체 유효성 검사
+	{
+		lock_release(&filesys_lock);
 		return;
+	}
 	struct thread *cur = thread_current();						// 현재 실행 중인 스레드 정보 가져오기
 
 	/* Proj 2-7. Extra */
@@ -368,15 +403,22 @@ void close(int fd)
 	}
 
 	remove_file_from_fdt(fd);									// fd 정보를 통해 file을 fdt에서 제거
-	if (fd <= 1 || fileobj <= 2)
-		return;
 
+	if (fd <= 1 || fileobj <= 2)
+	{
+		lock_release(&filesys_lock);
+		return;
+		
+	}
+
+	lock_release(&filesys_lock);
 	/* Proj 2-7. Extra */
 	/* dup_Count가 0일 때만 삭제할 수 있으며 1 이상인 경우에는 1씩 감소 */
 	if (fileobj->dupCount == 0)									
 		file_close(fileobj);
 	else
 		fileobj->dupCount--;
+
 }
 /* Proj 2-7. Extra */
 // Creates 'copy' of oldfd into newfd. If newfd is open, close it. Returns newfd on success, -1 on fail (invalid oldfd)
