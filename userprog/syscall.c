@@ -298,10 +298,17 @@ int open(const char *file) {
 }
 // Returns the size, in bytes, of the file open as fd.
 int filesize(int fd) {
+	int length;
+
 	struct file *fileobj = find_file_by_fd(fd);
 	if (fileobj == NULL)
 		return -1;
-	return file_length(fileobj);
+
+	lock_acquire(&filesys_lock);
+	length = file_length(fileobj);
+	lock_release(&filesys_lock);
+
+	return length;
 }
 // Reads size bytes from the file open as fd into buffer.
 // Returns the number of bytes actually read (0 at end of file), or -1 if the file could not be read
