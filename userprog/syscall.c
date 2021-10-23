@@ -86,6 +86,11 @@ syscall_handler (struct intr_frame *f) {
 
 	// printf ("system call!\n");
 
+/* Project 3. AP : 스택 포인터 저장 */
+#ifdef VM
+    thread_current()->stack_ptr = f->rsp;
+#endif
+
 	switch (f->R.rax)
 	{
 	case SYS_HALT:

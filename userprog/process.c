@@ -861,13 +861,33 @@ install_page (void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
+/* Project 3. AP : VM 및 Lazy Load를 위한 lazy load segment 함수 구현 */
 static bool
 lazy_load_segment (struct page *page, void *aux) {
-	/* TODO: Load the segment from the file */
-	/* TODO: This called when the first page fault occurs on address VA. */
-	/* TODO: VA is available when calling this function. */
+	/* TODO: Load the segment from the file */														// 파일로부터 세그먼트 로드
+	/* TODO: This called when the first page fault occurs on address VA. */							// VA에서 첫 페이지 폴트 발생 시 호출
+	/* TODO: VA is available when calling this function. */											// 즉, VA는 존재할 수 밖에 없음
+
+	struct load_info* li = (struct load_info *) aux;												// 읽어야 할 파일 정보 가져오기
+	if (page == NULL)  return false;																// 페이지가 NULL 이라면 false 리턴
+	ASSERT(li->page_read_bytes <= PGSIZE);															// 읽어야 할 바이트 수는 항상 PGSIZE 이하
+	ASSERT(li-> page_zero_bytes <= PGSIZE);
+
+	if (li->page_read_bytes > 0) {																	// 읽어야 할 바이트 수가 있다면
+		file_seek (li->file, li->ofs);																// file 내 offset 찾기
+		if (file_read (li->file, page->va, li->page_read_bytes) != (off_t)li->page_read_bytes) {	// 실제로 읽은 바이트 길이와 읽어야 할 바이트 길이 체크
+			vm_dealloc_page (page);																	// 같지 않다면 페이지 할당 반환, 파일 정보 해제 후 false 리턴
+			free (li);
+			return false;
+		}
+	}
+	memset (page->va+li->page_read_bytes, 0, li->page_zero_bytes);									// 문제 없다면 memset 진행 (dst, value, size)
+	file_close (li -> file);																		// memset 후 파일 닫기 및 파일 정보 해제
+	free (li);
+	return true;
 }
 
+/* Project 3. AP : VM을 위한 load segment 함수 구현 */
 /* Loads a segment starting at offset OFS in FILE at address
  * UPAGE.  In total, READ_BYTES + ZERO_BYTES bytes of virtual
  * memory are initialized, as follows:
@@ -884,11 +904,12 @@ lazy_load_segment (struct page *page, void *aux) {
  * or disk read error occurs. */
 static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
-		uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
-	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
+		uint32_t read_bytes, uint32_t zero_bytes, bool writable) {				// 인자 (파일, 위치, 페이지, 읽을 바이트 수, UPAGE+READ_BYTE, 쓰기 여부)
+	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);							
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
 
+	off_t read_ofs = ofs; 														// 읽는 위치에 대한 정보
 	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
@@ -897,19 +918,28 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
-		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
-			return false;
+		struct load_info *aux = malloc(sizeof(struct load_info));				// 로드 되는 파일에 대한 정보 및 읽기 위해 할당
+		aux->file = file_reopen(file);											// file 다시 오픈
+		aux->ofs = read_ofs;													// 읽는 위치
+		aux->page_read_bytes = page_read_bytes;									// 읽어야 할 바이트 수
+		aux->page_zero_bytes = page_zero_bytes;
 
+		if (!vm_alloc_page_with_initializer (VM_ANON, upage,					// 초기화 실패 했다면 aux free하고 false 리턴
+					writable, lazy_load_segment, aux)) {
+			free (aux);
+			return false;
+		}
+			
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		read_ofs += PGSIZE;
 	}
 	return true;
 }
 
+/* Project 3. AP : lazy_load에 맞는 스택 셋업 필요 */
 /* Create a PAGE of stack at the USER_STACK. Return true on success. */
 static bool
 setup_stack (struct intr_frame *if_) {
@@ -920,6 +950,15 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
+
+	
+	if (!vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom ,true)) return false;		// page 할당 받기
+	
+	success = vm_claim_page(stack_bottom);											// page claim 하기
+	if (success)																	// 성공 시 스택 포인터 업데이트
+		if_->rsp = USER_STACK;
+	else
+		return false;
 
 	return success;
 }
