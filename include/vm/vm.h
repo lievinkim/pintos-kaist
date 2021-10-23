@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include "threads/palloc.h"
 
+/* Project 3. MM : 해시테이블 자료구조 사용하기 위해 헤더 추가 */
+#include "lib/kernel/hash.h"
+
 enum vm_type {
 	/* page not initialized */
 	VM_UNINIT = 0,
@@ -45,7 +48,10 @@ struct page {
 	void *va;              /* Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
 
+	/* Project 3. MM : 해시테이블로 구현하기 위한 선언 */
 	/* Your implementation */
+	struct hash_elem hash_elem;			// page_table을 해시테이블로 구현함에 따라 hash_elem 추가
+	bool writable;						// page의 쓰기 가능 여부를 체크하는 구분자 추가
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -63,6 +69,10 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+
+	/* Project 3. MM : frame_list에 사용 할 elem 추가 */
+	/* elem for frame_list */
+	struct list_elem elem;
 };
 
 /* The function table for page operations.
@@ -85,6 +95,7 @@ struct page_operations {
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
 struct supplemental_page_table {
+	struct hash* page_table;		// Project 3. MM : hash 추가
 };
 
 #include "threads/thread.h"

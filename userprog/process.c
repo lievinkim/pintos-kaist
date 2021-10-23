@@ -489,7 +489,7 @@ process_exit (void) {
 	palloc_free_multiple(cur->fdTable, FDT_PAGES); 	// multi-oom
 
 	/* Proj 2-6. Denying write to executable - 프로세스 종료 시 쓰기 가능 상태로 변경 */
-	/* 예시. 프로세스 시작 시, args-none 파일을 로드 하면서 cur->running에 args-none 추가 */
+	/* 예시. 프로세스 시작 시, e 파일을 로드 하면서 cur->running에 args-none 추가 */
 	/* 프로세스 종료 시, cur->running에 있던 args-none을 제거 (위에 close는 FDT 파일에 있는 애들이 대상) */  
 	file_close(cur->running);
 
