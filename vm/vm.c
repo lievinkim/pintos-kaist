@@ -58,24 +58,32 @@ static uint64_t page_hash (const struct hash_elem *p_, void *aux UNUSED);
 static bool page_less (const struct hash_elem *a_,
            const struct hash_elem *b_, void *aux UNUSED);
 
+/* Project 3. AP : 최초 페이지 할당 후 initializer fetch 작업해 주는 함수 */
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
  * `vm_alloc_page`. */
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
-		vm_initializer *init, void *aux) {
+		vm_initializer *init, void *aux) {								// 인자 (type, va, writable, initializer, aux)
 
-	ASSERT (VM_TYPE(type) != VM_UNINIT)
+	ASSERT (VM_TYPE(type) != VM_UNINIT)									// 모든 페이지는 처음에 VM_UNINIT으로 생성된다.
 
-	struct supplemental_page_table *spt = &thread_current ()->spt;
+	struct supplemental_page_table *spt = &thread_current ()->spt;		// 현재 실행 중인 스레드의 SPT 정보 가져오기
 
 	/* Check wheter the upage is already occupied or not. */
-	if (spt_find_page (spt, upage) == NULL) {
+	if (spt_find_page (spt, upage) == NULL) {							// 전달 받은 va가 spt에 없는 경우에 진행 (처음 생성한 페이지라는 뜻)
 		/* TODO: Create the page, fetch the initialier according to the VM type,
 		 * TODO: and then create "uninit" page struct by calling uninit_new. You
 		 * TODO: should modify the field after calling the uninit_new. */
+		struct page *page = malloc(sizeof(struct page));				// 페이지 구조체 malloc 할당
+
+		ASSERT (VM_TYPE(type) == VM_ANON);								// Project 3. AP까지는 VM_ANON 타입만 다루고 있음
+		uninit_new(page, upage, init, type, aux, anon_initializer);		// initializer fetch (구조체 초기화 작업 진행)
+		page->writable = writable;										// 전달 받은 쓰기 가능 정보 저장하기
 
 		/* TODO: Insert the page into the spt. */
+		spt_insert_page(spt, page);										// spt에 page 삽입하기
+		return true;													// 모든 작업 완료 시 true 반환
 	}
 err:
 	return false;
@@ -159,19 +167,26 @@ static void
 vm_stack_growth (void *addr UNUSED) {
 }
 
+/* Project 3. AP : 기본적인 핸들링 내용 추가 */
 /* Handle the fault on write_protected page */
 static bool
 vm_handle_wp (struct page *page UNUSED) {
+	return false;
 }
 
+/* Project 3. AP : 폴트 발생한 주소에 상응하는 page 구조체 찾고 해결하는 함수 구현 */
 /* Return true on success */
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
-	struct page *page = NULL;
+	struct page* page = spt_find_page(spt, addr);
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
+
+	if (is_kernel_vaddr(addr) && user) return false;							// 해당 주소가 커널 영역이면 false 리턴
+	if (page == NULL) return false;												// 페이지를 못 찾았을 경우 false 리턴
+	if (write && !not_present) return vm_handle_wp(page);						// write_protected page인 경우 핸들링
 
 	return vm_do_claim_page (page);
 }
@@ -216,7 +231,7 @@ vm_do_claim_page (struct page *page) {
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 	/* page의 virtual address를 frame의 physical address로 맵핑하기 위해 page table entry 삽입 */
 	/* supplemental page table - page table - physical address 에서 가운데 page table에 올리는 작업*/
-	if (!pml4_set_page (curr -> pml4, page -> va, frame->kva, page -> writable))
+	if (!pml4_set_page (curr->pml4, page->va, frame->kva, page -> writable))
 		return false;
 
 

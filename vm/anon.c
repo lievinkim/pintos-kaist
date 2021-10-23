@@ -24,13 +24,17 @@ vm_anon_init (void) {
 	swap_disk = NULL;
 }
 
+/* Project 3. AP : anonymous page initializer 구현 */
 /* Initialize the file mapping */
 bool
-anon_initializer (struct page *page, enum vm_type type, void *kva) {
-	/* Set up the handler */
-	page->operations = &anon_ops;
+anon_initializer (struct page *page, enum vm_type type, void *kva) {	// 인자 (페이지, 타입, kva)
 
-	struct anon_page *anon_page = &page->anon;
+	/* Set up the handler */
+	page->operations = &anon_ops;						// 페이지 operations에 anon_ops 할당
+	struct anon_page *anon_page = &page->anon;			// 페이지의 anon을 anon_page 구조체에 할당
+	anon_page->owner = thread_current();				// 현재 실행 중인 스레드를 anon_page 오너로 설정
+
+	return true;
 }
 
 /* Swap in the page by read contents from the swap disk. */
