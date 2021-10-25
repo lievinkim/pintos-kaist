@@ -18,6 +18,12 @@
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
+
+/* Project 3. AP */
+#include "threads/malloc.h"
+#include "threads/synch.h"
+#include "userprog/syscall.h"
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -321,6 +327,11 @@ process_exec (void *f_name) {
 
 	/* We first kill the current context */
 	process_cleanup ();
+	
+	/* Project 3. AP : 우연히 필요한 경우의 수를 찾게 되어 추가함 */
+#ifdef VM
+	supplemental_page_table_init(&thread_current()->spt);
+#endif
 
 	/* P2-1. Parsing
 	 * argv[]는 인자를 저장 할 배열
@@ -951,14 +962,14 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
 
-	
-	if (!vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom ,true)) return false;		// page 할당 받기
-	
-	success = vm_claim_page(stack_bottom);											// page claim 하기
-	if (success)																	// 성공 시 스택 포인터 업데이트
-		if_->rsp = USER_STACK;
-	else
-		return false;
+	if (vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom ,true))
+	{
+		success = vm_claim_page(stack_bottom);								// page claim 하기
+
+		if (success) {														// 성공 시 스택 포인터 업데이트
+			if_->rsp = USER_STACK;
+		}
+	}
 
 	return success;
 }

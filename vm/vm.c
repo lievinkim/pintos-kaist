@@ -13,8 +13,14 @@
 /* Project 3. MM : page claim을 위해 mmu 헤더 추가 */
 #include "threads/mmu.h"
 
+/* Project 3. AP : SPT-REVISIT 작업 진행 */
+#include <string.h>
+
 /* Project 3. MM : frame_list 선언 */
 static struct list frame_list;
+
+/* Project 3. AP : SPT-REVIST KILL을 위한 lock 설정 */
+static struct lock spt_kill_lock;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -29,9 +35,11 @@ vm_init (void) {
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
 
+	/* Project 3. AP : SPT-REVIST KILL을 위한 lock 설정 */
+	lock_init(&spt_kill_lock);
+
 	/* Project 3. MM : frame_list 초기화 */
 	list_init (&frame_list);
-
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -66,8 +74,6 @@ bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		vm_initializer *init, void *aux) {								// 인자 (type, va, writable, initializer, aux)
 
-	ASSERT (VM_TYPE(type) != VM_UNINIT)									// 모든 페이지는 처음에 VM_UNINIT으로 생성된다.
-
 	struct supplemental_page_table *spt = &thread_current ()->spt;		// 현재 실행 중인 스레드의 SPT 정보 가져오기
 
 	/* Check wheter the upage is already occupied or not. */
@@ -75,10 +81,17 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		/* TODO: Create the page, fetch the initialier according to the VM type,
 		 * TODO: and then create "uninit" page struct by calling uninit_new. You
 		 * TODO: should modify the field after calling the uninit_new. */
+
+		ASSERT (VM_TYPE(type) != VM_UNINIT)								// 모든 페이지는 처음에 VM_UNINIT으로 생성된다.
+
 		struct page *page = malloc(sizeof(struct page));				// 페이지 구조체 malloc 할당
 
-		ASSERT (VM_TYPE(type) == VM_ANON);								// Project 3. AP까지는 VM_ANON 타입만 다루고 있음
-		uninit_new(page, upage, init, type, aux, anon_initializer);		// initializer fetch (구조체 초기화 작업 진행)
+		if (VM_TYPE(type) == VM_ANON) {
+			uninit_new(page, upage, init, type, aux, anon_initializer);	// initializer fetch (구조체 초기화 작업 진행)
+		} else if (VM_TYPE(type) == VM_FILE) {
+			return false;
+		}
+		
 		page->writable = writable;										// 전달 받은 쓰기 가능 정보 저장하기
 
 		/* TODO: Insert the page into the spt. */
@@ -179,12 +192,15 @@ vm_handle_wp (struct page *page UNUSED) {
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
-	struct page* page = spt_find_page(spt, addr);
+
+	struct thread *curr = thread_current();
+	struct supplemental_page_table *spt UNUSED = &curr->spt;
+
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
-
 	if (is_kernel_vaddr(addr) && user) return false;							// 해당 주소가 커널 영역이면 false 리턴
+
+	struct page* page = spt_find_page (spt, addr);
 	if (page == NULL) return false;												// 페이지를 못 찾았을 경우 false 리턴
 	if (write && !not_present) return vm_handle_wp(page);						// write_protected page인 경우 핸들링
 
@@ -241,8 +257,8 @@ vm_do_claim_page (struct page *page) {
 /* Project 3. MM : 해싱 함수 구현 */
 static uint64_t
 page_hash (const struct hash_elem *p_, void *aux UNUSED) {
-	const struct page *p = hash_entry(p_, struct page, hash_elem);
-	return hash_bytes(&p->va, sizeof p->va);
+  const struct page *p = hash_entry (p_, struct page, hash_elem);
+  return hash_bytes (&p->va, sizeof p->va);
 }
 
 /* Project 3. MM : 해시값 비교 함수 구현 */
@@ -264,15 +280,73 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 	spt->page_table = page_table;								// spt의 page_table에 저장
 }
 
+/* Project 3. AP : SPT-REVISIT 작업 진행 */
 /* Copy supplemental page table from src to dst */
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
+	
+	struct hash_iterator i;
+	hash_first(&i, src->page_table);															// spt 내 모든 페이지를 돌기 위한 세팅
+	while (hash_next(&i)) {
+		struct page *page = hash_entry(hash_cur(&i), struct page, hash_elem);					// current hash에 대한 페이지 정보 가져오기
+
+		/* Handle UNINIT pages*/
+		if(page->operations->type == VM_UNINIT) {												// 해당 페이지가 UNINIT 페이지인 경우
+			vm_initializer *init = page->uninit.init;											// UNINIT 내 세팅해 놓은 initializer 가져오기
+			bool writable = page->writable;
+			int type = page->uninit.type;
+			if (type & VM_ANON) {																// 기존 세팅 값이 ANON인 경우
+				struct load_info* li = malloc (sizeof (struct load_info));						// uninit의 initialize 진행
+				li->file = file_duplicate (((struct load_info *)page->uninit.aux)->file);
+				li->page_read_bytes = ((struct load_info *)page->uninit.aux)->page_read_bytes;
+				li->page_zero_bytes = ((struct load_info *)page->uninit.aux)->page_zero_bytes;
+				li->ofs = ((struct load_info *) page->uninit.aux)->ofs;
+				vm_alloc_page_with_initializer (type, page->va, writable, init, (void*)li);				
+			} else if (type & VM_FILE) {														// 기존 세팅 값이 FILE인 경우 (아무것도 안함)
+				// Do nothing (should not inherit)
+			}
+		/* Handle ANON pages */
+		} else if (page_get_type(page) == VM_ANON){												// 해당 페이지가 ANON 페이지인 경우
+
+			if (!vm_alloc_page (page->operations->type, page->va, page->writable))				// 페이지 할당
+				return false;
+
+			struct page* new_page = spt_find_page (&thread_current()->spt, page->va);
+
+			if (!vm_do_claim_page (new_page))													// 바로 claim
+				return false;
+
+			memcpy (new_page->frame->kva, page->frame->kva, PGSIZE);							// 복사 진행
+		} else if (page_get_type(page) == VM_FILE){												// 해당 페이지가 FILE 페이지인 경우 (아무것도 안함)
+			// Do nothing (should not inherit)
+		}
+
+	}
+
+	return true;
+
 }
 
+/* Project 3. AP : SPT-REVISIT 작업 진행 */
+static void
+spt_destroy (struct hash_elem *e, void *aux UNUSED){
+	struct page *page = hash_entry (e, struct page, hash_elem);					// 해시 엔트리로 페이지 가져오기
+	ASSERT (page != NULL);														// PAGE가 이미 NULL이면 ASSERT
+	destroy (page);																// PAGE 삭제
+	free (page);																// PAGE 해제
+}
+
+/* Project 3. AP : SPT-REVISIT 작업 진행 */
 /* Free the resource hold by the supplemental page table */
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+
+	if (spt->page_table == NULL) return;										// 이미 NULL이라면 작업 필요 없음
+	lock_acquire(&spt_kill_lock);												// 작업 전 lock 획득
+	hash_destroy(spt->page_table, spt_destroy);									// page_table 돌아다니며 spt_destroy 진행
+	free(spt->page_table);														// 진행 후 page_table 해제
+	lock_release(&spt_kill_lock);												// 작업 전 lock 반환
 }

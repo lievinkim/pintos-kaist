@@ -11,6 +11,9 @@
 #include "vm/vm.h"
 #include "vm/uninit.h"
 
+/* Project 3. AP : Page Cleanup 작업을 위한 헤더 추가 */
+#include "threads/malloc.h"
+
 static bool uninit_initialize (struct page *page, void *kva);
 static void uninit_destroy (struct page *page);
 
@@ -62,7 +65,11 @@ uninit_initialize (struct page *page, void *kva) {
  * PAGE will be freed by the caller. */
 static void
 uninit_destroy (struct page *page) {
-	struct uninit_page *uninit UNUSED = &page->uninit;
 	/* TODO: Fill this function.
 	 * TODO: If you don't have anything to do, just return. */
+
+	/* Project 3. AP : Page Cleanup 작업을 위한 코드 */
+	if (page->uninit.aux != NULL) free (page->uninit.aux);
+	
+	return;
 }

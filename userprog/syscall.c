@@ -18,6 +18,9 @@
 #include "filesys/file.h"
 #include <list.h>
 
+/* Project 3. check adddress, writable 수정에 따른 헤더 추가 */
+#include "vm/file.h"
+
 /* Proj 2-7. Extra */
 /* stdin, stdout 상수 선언 */
 const int STDIN = 1;
@@ -34,6 +37,9 @@ tid_t fork(const char *thread_name, struct intr_frame *f);
 int wait(tid_t child_tid);
 int exec(char *file_name);
 void check_address(uaddr);
+
+/* Project 3. check adddress, writable 수정에 따른 선언 추가 */
+void check_writable_addr(const uint64_t *uaddr);
 
 bool create(const char *file, unsigned initial_size);
 bool remove(const char *file);
@@ -84,13 +90,10 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f) {
 
-	// printf ("system call!\n");
-
-/* Project 3. AP : 스택 포인터 저장 */
-#ifdef VM
-    thread_current()->stack_ptr = f->rsp;
-#endif
-
+	/* Project 3. AP : 스택 포인터 저장 */
+	struct thread* curr = thread_current ();
+	curr->stack_ptr = f->rsp;
+	
 	switch (f->R.rax)
 	{
 	case SYS_HALT:
@@ -103,8 +106,8 @@ syscall_handler (struct intr_frame *f) {
 		f->R.rax = fork(f->R.rdi, f);
 		break;
 	case SYS_EXEC:
-		if (exec(f->R.rdi) == -1)
-			exit(-1);
+		/* exec 함수를 조금 다듬기 - 특별한 이유 없음 */
+		f->R.rax = exec(f->R.rdi);
 		break;
 	case SYS_WAIT:
 		f->R.rax = wait(f->R.rdi);
@@ -162,7 +165,8 @@ void exit(int status) {
 	cur->exit_status = status;								// exit_status에 status 값 넣기
 
 	/* Proj 2-5. Process Termination Message */ 
-	printf("%s: exit(%d)\n", thread_name(), status);		// exit을 통해 혹은 다른 이유로 사용자 프로세스가 종료되었을 때 프로세스 이름과 exit 코드 출력
+	/* Project 3. AP : 주석 처리 for snyc-write */
+	// printf("%s: exit(%d)\n", thread_name(), status);		// exit을 통해 혹은 다른 이유로 사용자 프로세스가 종료되었을 때 프로세스 이름과 exit 코드 출력
 
 	thread_exit();
 }
@@ -209,6 +213,8 @@ int write(int fd, const void *buffer, unsigned size) {
 /* (child) Returns 0 */
 tid_t fork(const char *thread_name, struct intr_frame *f)
 {
+	/* Project 3. Check address 수정 */
+	check_address((uint64_t *)thread_name);
 	return process_fork(thread_name, f);
 }
 /* Parent는 Child 프로세스가 종료될 때까지 대기 (Child 프로세스가 exit_status 반환까지) */
@@ -248,10 +254,29 @@ int exec(char *file_name)
 // 3. A pointer to unmapped virtual memory (causes page_fault)
 void check_address(const uint64_t *uaddr) {
 	struct thread *cur = thread_current();
-	if (uaddr == NULL || !(is_user_vaddr(uaddr)) || pml4_get_page(cur->pml4, uaddr) == NULL)
-	{
+
+	if (uaddr == NULL || !(is_user_vaddr(uaddr))) {
 		exit(-1);
 	}
+
+	/* Project 3. AP : Page Fault 처리 변경 */
+	uint64_t *pte = pml4e_walk(thread_current()->pml4, (const uint64_t) uaddr, 0);
+	if (pte == NULL) exit(-1);
+
+	struct page *page = spt_find_page(&thread_current()->spt, uaddr);
+	if (page == NULL) exit(-1);
+
+	/* Project 2 내용으로 주석 처리 */
+	// else if (pml4_get_page(cur->pml4, uaddr) == NULL) {
+	// 	printf("page is null\n\n");
+	// 	exit(-1);
+	// }
+}
+
+/* Project 3. AP : 추가 */
+void check_writable_addr(const uint64_t *uaddr){
+	struct page *page = spt_find_page (&thread_current()->spt, uaddr);
+	if (page == NULL || !page->writable) exit(-1);
 }
 
 
@@ -320,6 +345,10 @@ int filesize(int fd) {
 int read(int fd, void *buffer, unsigned size)
 {
 	check_address(buffer);
+
+	/* Project 3. AP : buffer에 쓰기 가능한 주소인지 검사 */
+	check_writable_addr(buffer);
+
 	int ret;
 
 	struct file *fileobj = find_file_by_fd(fd);			// fd 정보를 통해 file 객체 가져오기
@@ -359,6 +388,7 @@ int read(int fd, void *buffer, unsigned size)
 		ret = file_read(fileobj, buffer, size);				// file system 함수 활용하여 읽기 진행
 		lock_release(&filesys_lock);						// 글로벌 read/write lcok release
 	}
+
 	return ret;
 }
 // Changes the next byte to be read or written in open file fd to position,
