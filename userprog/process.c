@@ -291,7 +291,7 @@ __do_fork (void *aux) {
 	}
 	current->fdIdx = parent->fdIdx;					// child와 부모의 fdIdx 값 동일하게 맞추기 
 
-	// process_init ();										// 노트. 현재까지 큰 의미는 없어 보이는 함수
+	process_init();										// 노트. 현재까지 큰 의미는 없어 보이는 함수
 	
 	/* Proj 2-3. fork syscall */
 	sema_up(&current->fork_sema); 							// 노트. child load 성공 및 fork 작업 끝났음을 부모에게 전달
@@ -504,7 +504,12 @@ process_exit (void) {
 	/* 프로세스 종료 시, cur->running에 있던 args-none을 제거 (위에 close는 FDT 파일에 있는 애들이 대상) */  
 	file_close(cur->running);
 
-	process_cleanup ();
+	/* Project 3. AP : 여기로 이동..*/
+	if (cur->pml4 != NULL){
+		// Print termination message when user process terminates
+		process_cleanup ();
+		printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
+	}
 
 	/* Proj 2-3. wait syscall */
 	sema_up(&cur->wait_sema);					// 대기 중인(blocked) 부모 프로세스가 깨어날 수 있도록 함

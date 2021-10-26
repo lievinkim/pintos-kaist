@@ -91,8 +91,10 @@ void
 syscall_handler (struct intr_frame *f) {
 
 	/* Project 3. AP : 스택 포인터 저장 */
+#ifdef VM
 	struct thread* curr = thread_current ();
 	curr->stack_ptr = f->rsp;
+#endif
 	
 	switch (f->R.rax)
 	{
@@ -165,7 +167,7 @@ void exit(int status) {
 	cur->exit_status = status;								// exit_status에 status 값 넣기
 
 	/* Proj 2-5. Process Termination Message */ 
-	/* Project 3. AP : 주석 처리 for snyc-write */
+	/* Project 3. AP : 주석 처리 -> process_exit으로 이동 */
 	// printf("%s: exit(%d)\n", thread_name(), status);		// exit을 통해 혹은 다른 이유로 사용자 프로세스가 종료되었을 때 프로세스 이름과 exit 코드 출력
 
 	thread_exit();
@@ -289,7 +291,7 @@ bool create(const char *file, unsigned initial_size) {
 	bool success;
 	
 	lock_acquire(&filesys_lock);
-	success = filesys_create(file, initial_size); // file system 함수 활용하여 생성
+	success = filesys_create(file, (off_t)initial_size); // file system 함수 활용하여 생성
 	lock_release(&filesys_lock);
 
 	return success;
@@ -312,14 +314,13 @@ int open(const char *file) {
 	
 	lock_acquire(&filesys_lock);
 	fileobj = filesys_open(file);  // file system 함수 활용하여 open
+	lock_release(&filesys_lock);
 
 	if (fileobj == NULL) {	// obj 생성 여부 확인
-		lock_release(&filesys_lock);
 		return -1;
 	} 						
 		
 	int fd = add_file_to_fdt(fileobj); 			// 생성된 obj는 프로세스의 fdt에 추가 및 fd 리턴 받음
-	lock_release(&filesys_lock);
 	
 	if (fd == -1)								// fdt가 가득 찼는지 여부 확인
 		file_close(fileobj);
@@ -424,11 +425,11 @@ unsigned tell(int fd)
 // Closes file descriptor fd. Ignores NULL file. Returns nothing.
 void close(int fd)
 {
-	lock_acquire(&filesys_lock);
+
 	struct file *fileobj = find_file_by_fd(fd);					// fd 정보를 통해 file 정보 가져오기
+	
 	if (fileobj == NULL)										// 객체 유효성 검사
 	{
-		lock_release(&filesys_lock);
 		return;
 	}
 	struct thread *cur = thread_current();						// 현재 실행 중인 스레드 정보 가져오기
@@ -448,12 +449,10 @@ void close(int fd)
 
 	if (fd <= 1 || fileobj <= 2)
 	{
-		lock_release(&filesys_lock);
 		return;
-		
 	}
 
-	lock_release(&filesys_lock);
+	
 	/* Proj 2-7. Extra */
 	/* dup_Count가 0일 때만 삭제할 수 있으며 1 이상인 경우에는 1씩 감소 */
 	if (fileobj->dupCount == 0)									

@@ -74,7 +74,8 @@ bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		vm_initializer *init, void *aux) {								// 인자 (type, va, writable, initializer, aux)
 
-	struct supplemental_page_table *spt = &thread_current ()->spt;		// 현재 실행 중인 스레드의 SPT 정보 가져오기
+	struct supplemental_page_table *spt = &thread_current ()->spt; 		// 현재 실행 중인 스레드의 SPT 정보 가져오기
+	bool writable_aux = writable;
 
 	/* Check wheter the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {							// 전달 받은 va가 spt에 없는 경우에 진행 (처음 생성한 페이지라는 뜻)
@@ -92,7 +93,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 			return false;
 		}
 		
-		page->writable = writable;										// 전달 받은 쓰기 가능 정보 저장하기
+		page->writable = writable_aux;										// 전달 받은 쓰기 가능 정보 저장하기
 
 		/* TODO: Insert the page into the spt. */
 		spt_insert_page(spt, page);										// spt에 page 삽입하기
