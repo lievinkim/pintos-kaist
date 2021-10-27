@@ -91,9 +91,6 @@ static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
 /* 노트. Advanced Scheduling에 따른 글로벌 변수 선언 */
 int load_avg;
 
-/* Project 3. AP : filesys를 스레드별로 사용할 수 있게 선언 */
-extern struct lock filesys_lock;
-
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S

@@ -554,6 +554,26 @@ process_activate (struct thread *next) {
 	tss_update (next);
 }
 
+
+/* Project 3. MMF : mmap 함수를 위한 process_get_file 함수 구현 */
+struct file *process_get_file(int fd) {
+	struct thread *curr = thread_current();
+	struct file* fd_file = curr->fdTable[fd];
+
+	if (fd_file)
+		return fd_file;							// fdTable에서 파일을 찾으면 해당 파일 정보 리턴
+	else
+		return	NULL;							// 찾지 못하면 NULL 리턴
+}
+
+
+
+
+
+
+
+
+
 /* We load ELF binaries.  The following definitions are taken
  * from the ELF specification, [ELF1], more-or-less verbatim.  */
 

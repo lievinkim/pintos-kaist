@@ -21,4 +21,7 @@ struct MapElem
 	uintptr_t value;
 };
 
+/* Project 3. MMF : 신규 생성 함수 선언 */
+struct file *process_get_file(int fd);
+
 #endif /* userprog/process.h */

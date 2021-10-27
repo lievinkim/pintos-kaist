@@ -53,6 +53,10 @@ void close(int fd);
 /* Proj 2-7. Extra */
 int dup2(int oldfd, int newfd);
 
+/* Project 3. MMF : mmap, munmap 함수 선언 */
+static void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+static void munmap (void* addr);
+
 int add_file_to_fdt(struct file *file);
 static struct file *find_file_by_fd(int fd);
 void remove_file_from_fdt(int fd);
@@ -90,10 +94,10 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f) {
 
-	/* Project 3. AP : 스택 포인터 저장 */
+	/* Project 3. SG : 스택 포인터 저장 */
 #ifdef VM
 	struct thread* curr = thread_current ();
-	curr->stack_ptr = f->rsp;
+	curr->saving_rsp = f->rsp;
 #endif
 	
 	switch (f->R.rax)
@@ -144,6 +148,15 @@ syscall_handler (struct intr_frame *f) {
 	case SYS_DUP2:
 		f->R.rax = dup2(f->R.rdi, f->R.rsi);
 		break;
+
+	/* Project 3. MMF : 시스템 콜 추가 */
+	case SYS_MMAP:
+		f->R.rax = (uint64_t) mmap ((void*) f->R.rdi, (size_t) f->R.rsi, (int) f->R.rdx, (int) f->R.r10, (off_t) f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap (f->R.rdi);
+		break;
+
 	default:
 		exit(-1);
 		break;
@@ -290,9 +303,9 @@ bool create(const char *file, unsigned initial_size) {
 	check_address(file);
 	bool success;
 	
-	lock_acquire(&filesys_lock);
+	// lock_acquire(&filesys_lock);
 	success = filesys_create(file, (off_t)initial_size); // file system 함수 활용하여 생성
-	lock_release(&filesys_lock);
+	// lock_release(&filesys_lock);
 
 	return success;
 }
@@ -532,4 +545,40 @@ void remove_file_from_fdt(int fd)
 		return;
 
 	cur->fdTable[fd] = NULL;						// 해당 FDT 값을 NULL로 바꿈
+}
+
+/* Project 3. MMF : mmap 함수와 munmap 함수 구현하기 */
+/*
+ * addr : 할당한 가상 주소
+ * length : 할당할 파일의 길이
+ * fd : 파일
+ * writable : 메모리 쓰기 가능 여부
+ * offset : 파일 내 할당 시작 위치
+ */
+static void *
+mmap (void *addr, size_t length, int writable, int fd, off_t offset){
+
+	/* 모든 파라미터 에러를 핸들한 후 do_mmap 호출 */
+	/* Handle all parameter error and pass it to do_mmap */
+
+	if (addr == 0 || (!is_user_vaddr(addr))) return NULL;							// 주소는 사용자 가상 공간이어야 하고 0이면 안됨
+	if (length == 0) return NULL;													// length가 0이면 안됨
+	if ((uint64_t)addr % PGSIZE != 0) return NULL;									// addr은 page-aligned 되어 있어야 함
+	if (offset % PGSIZE != 0) return NULL;											// offset은 page-aligned 되어 있어야 함
+	if ((uint64_t)addr + length == 0) return NULL;									// addr와 length 둘 다 0이면 안됨 (?)
+	if (!is_user_vaddr((uint64_t)addr + length)) return NULL;						// addr와 length의 합이 사용자 영역에 있어야 함
+	for (uint64_t i = (uint64_t) addr; i < (uint64_t) addr + length; i += PGSIZE){
+		if (spt_find_page (&thread_current()->spt, (void *)i)!=NULL) return NULL;	// spt에서 할당된 페이지를 찾지 못하면 안됨
+	}
+
+	struct file *target = process_get_file(fd);										// fd 인자를 기반으로 파일 탐색 시작
+	if (target == NULL) return NULL;												// 파일 탐색 실패 시 NULL 리턴
+	
+
+	return do_mmap(addr, length, writable, target, offset);							// do_mmap 호출!
+}
+
+static void
+munmap (void* addr){
+	do_munmap(addr);																// 맵핑 정보 해제
 }

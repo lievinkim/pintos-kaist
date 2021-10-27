@@ -140,12 +140,11 @@ page_fault (struct intr_frame *f) {
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
 
-	/* Project 3. AP : handlig fault 함수 수정 */
-	/* 현재의 PintOS는 오류 발생시 무조건 segmentation fault 발생 시키고 kill하여 종료 */
-	/* kill(-1) 처리 코드 삭제 및 fault_addr 유효성 검사 후 페이지 폴트 핸들러 함수 호출 */
+
+	/* Project 3. SG : Stack Growth를 위해 스택 포인터 저장 */
 	struct thread *curr = thread_current ();
 	if (user) {
-		curr->stack_ptr = f->rsp;
+		curr->saving_rsp = f->rsp;
 	}
 
 #ifdef VM
@@ -153,6 +152,10 @@ page_fault (struct intr_frame *f) {
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
 		return;
 #endif
+
+	/* Project 3. AP : handlig fault 함수 수정 */
+	/* 현재의 PintOS는 오류 발생시 무조건 segmentation fault 발생 시키고 kill하여 종료 */
+	/* kill(-1) 처리 코드 삭제 및 fault_addr 유효성 검사 후 페이지 폴트 핸들러 함수 호출 */
 
 	exit(-1); 			// multi-oom and other Project2 test-cases
 

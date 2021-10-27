@@ -22,6 +22,12 @@ static struct list frame_list;
 /* Project 3. AP : SPT-REVIST KILL을 위한 lock 설정 */
 static struct lock spt_kill_lock;
 
+/* Project 3. Swap In/Out : clock 알고리즘을 위한 lock 구조체 선언 */
+static struct lock clock_lock;
+
+/* Project 3. Swap In/Out : clock 알고리즘에 따른 대상 정보 */
+static struct list_elem *clock_elem;
+
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void
@@ -40,6 +46,12 @@ vm_init (void) {
 
 	/* Project 3. MM : frame_list 초기화 */
 	list_init (&frame_list);
+
+	/* Project 3. Swap In/Out : clock 알고리즘을 위한 lock init */
+	lock_init (&clock_lock);
+
+	/* Project 3. Swap In/Out : 처음에는 당연히 NULL 값 */
+	clock_elem = NULL;
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -66,6 +78,9 @@ static uint64_t page_hash (const struct hash_elem *p_, void *aux UNUSED);
 static bool page_less (const struct hash_elem *a_,
            const struct hash_elem *b_, void *aux UNUSED);
 
+/* Project 3. Swap In/Out : clock 알고리즘에 따라 list를 원형 테이블로 바꾸기 위한 함수 선언 */
+static struct list_elem *list_next_cycle (struct list *lst, struct list_elem *elem);
+
 /* Project 3. AP : 최초 페이지 할당 후 initializer fetch 작업해 주는 함수 */
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
@@ -90,7 +105,9 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		if (VM_TYPE(type) == VM_ANON) {
 			uninit_new(page, upage, init, type, aux, anon_initializer);	// initializer fetch (구조체 초기화 작업 진행)
 		} else if (VM_TYPE(type) == VM_FILE) {
-			return false;
+
+			/* Project 3. MMF : 파일 백업 페이지를 위한 initializer fetch */
+			uninit_new (page, upage, init, type, aux, file_backed_initializer);
 		}
 		
 		page->writable = writable_aux;										// 전달 받은 쓰기 가능 정보 저장하기
@@ -134,27 +151,84 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED,
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
-	vm_dealloc_page (page);
+	/* Project 3. MMF : munmap 시 사용 */
+	struct hash_elem* e = hash_delete (spt -> page_table, &page ->hash_elem);  	// hash 테이블로 관리하기 때문에 hash 테이블에서 가져오기
+	if (e != NULL) vm_dealloc_page (page);										// 해시 테이블에 값이 있다면 해당 값 dealloc 진행
 	return true;
 }
 
+/* Project 3. Swap In/Out : clock 알고리즘에 따라 list를 원형 테이블로 바꾸기 위한 함수 구현 */
+static struct list_elem *
+list_next_cycle (struct list *lst, struct list_elem *elem) {
+	struct list_elem *cand_elem = elem;							// elem의 list_elem 정보 가져오기
+
+	if (cand_elem == list_back (lst))								// 만약 후보 elem이 리스트의 마지막인 경우,
+		cand_elem = list_front (lst);								// 리스트 앞에서 다시 시작
+	else
+		cand_elem = list_next (cand_elem);							// 그렇지 않은 경우에는 다음 친구 데려오기
+
+	return cand_elem;
+}
+
+/* Project 3. Swap In/Out : clock 알고리즘에 따른 victim 구하는 함수 구현 */
 /* Get the struct frame, that will be evicted. */
 static struct frame *
 vm_get_victim (void) {
+
 	struct frame *victim = NULL;
-	 /* TODO: The policy for eviction is up to you. */
+	/* TODO: The policy for eviction is up to you. */
+	/* Clock Algorithm 선택 - https://kouzie.github.io/operatingsystem/%EA%B0%80%EC%83%81%EB%A9%94%EB%AA%A8%EB%A6%AC/#clock-algorithm */
+
+	struct thread *curr = thread_current ();								// 현재 실행 중인 스레드 정보 가져오기
+
+	lock_acquire (&clock_lock);												// 스레드 간 발생할 수 있는 동기화 및 레이스 이슈 방지
+
+	struct list_elem *vict_elem = clock_elem;								// clock elem 정보 가져오기 (최초에는 NULL인 것임)
+
+	if (vict_elem == NULL && !list_empty (&frame_list))						// vict 정보가 없는데 (최초), frame list가 비어있지 않다면
+		vict_elem = list_front (&frame_list);								// list의 첫 번째를 vict_elem으로 가져오기 (해당 elem 기반으로 탐색 시작)
+
+	while (vict_elem != NULL) {												// vict 정보가 있다면,
+
+		// Check frame accessed
+		victim = list_entry (vict_elem, struct frame, elem);				// frame 리스트에 있는 victim 후보 하나씩 조회하기
+
+		if (!pml4_is_accessed (curr->pml4, victim->page->va))				// 최근에 접근한 적이 없는 페이지다?
+			break; // Found!												// 당첨
+		
+		pml4_set_accessed (curr->pml4, victim->page->va, false);			// 한번 체크한 친구는 지나갈 때 0으로 다시 바꿔줌
+		vict_elem = list_next_cycle (&frame_list, vict_elem);				// frame_list의 다음 친구를 vict_elem으로 설정
+	}			
+	
+	clock_elem = list_next_cycle (&frame_list, vict_elem);					// break 시 선택 된 victim은 빠지기 때문에 그 다음 친구를 clock_elem으로 선정 (Tick Clock)
+	list_remove (vict_elem);												// victim은 리스트에서 삭제
+	
+	lock_release (&clock_lock);												// 락 해제
 
 	return victim;
+
 }
 
+/* Project 3. Swap In/Out : 구한 victim 축출하는 함수 구현 */
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
 static struct frame *
 vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
-	/* TODO: swap out the victim and return the evicted frame. */
+	struct frame *victim UNUSED = vm_get_victim ();							// victim 선정
 
-	return NULL;
+	/* TODO: swap out the victim and return the evicted frame. */
+	if (victim == NULL) return NULL;										// victim이 선정되지 않았다면 NULL 리턴
+
+	/* Swap out the victim and return the evicted frame. */
+	struct page *page = victim->page;										// victim의 페이지 구조체 가져오기
+	bool swap_done = swap_out (page);										// victim의 페이지 스왑 아웃 시키기
+
+	if (!swap_done) PANIC("Swap is full!\n");								// swap이 안되었다면 꽉 찼다는 뜻임으로 PANIC 발생
+
+	victim->page = NULL;													// victim의 페이지 초기화
+	memset (victim->kva, 0, PGSIZE);										// 해당 페이지의 값 0으로 초기화
+
+	return victim;															// 축출 완료 및 해당 victim 전달
 }
 
 /* Project 3. MM : frame 얻기 위한 함수 구현 */
@@ -169,16 +243,41 @@ vm_get_frame (void) {
 	frame->kva = palloc_get_page(PAL_USER);
 	frame->page = NULL;
 
-	ASSERT (frame != NULL);
-	ASSERT (frame->page == NULL);
+	/* Project 3. Swap In/Out : frame이 꽉 찼을 때 Swap In/Out 진행 */
+	// ASSERT (frame != NULL);
+	// ASSERT (frame->page == NULL);
+
+	if (frame->kva == NULL) {
+	  free(frame);						// 기존에 할당 받은 frame은 사용할 수 없음으로 우선 해제
+	  frame = vm_evict_frame();			// 해제 후 축출한 frame(victim) 정보 가져오기
+	}
 
 	ASSERT (frame->kva != NULL);
 	return frame;
 }
 
+/* Project 3. SG : Stack Growth 함수 구현 */
+/* vm_try_handle_fault에서 전달 받은 주소 기반으로 새로운 페이지 추가 */
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
+	void *stack_bottom = pg_round_down (addr);									// 늘려을 때의 스택 바닥 주소
+	size_t req_stack_size = USER_STACK - (uintptr_t)stack_bottom;				// 늘렸을 때의 스택 영역 사이즈
+
+	if (req_stack_size > (1 << 20)) PANIC("Stack limit exceeded!\n");			// 해당 프로젝트에서는 스택의 영역을 1MB로 제한
+
+	void *growing_stack_bottom = stack_bottom;									// 늘려주기 위한 보조 장치
+	
+	while ((uintptr_t) growing_stack_bottom < USER_STACK &&						// 늘렸을 때의 스택 바닥 주소가 USER_STACK 보단 작아야 함
+		vm_alloc_page (VM_ANON | VM_MARKER_0, growing_stack_bottom, true)) {	// vm_alloc_page를 통해 할당 받아야 함
+
+		/* 할당이 완료되면 growing_stack_bottom의 높이를 한 페이지 만큼 올려줌 */
+		/* 이는 여러 페이지를 늘렸을 때 최하단부터 하나씩 늘리기 위함 - 최대 늘렸을 때의 유효성을 체크하기 위함 인듯 */
+		/* 그러나 애초에 vm_try_handle_fault에서 최대 1페이지 크기만큼만 전달 받기 때문에 사실 없어도 될 듯? */
+		growing_stack_bottom += PGSIZE;
+	};
+
+	vm_claim_page(stack_bottom);												// 요청한 페이지에 대해서 Lazy laod
 }
 
 /* Project 3. AP : 기본적인 핸들링 내용 추가 */
@@ -200,6 +299,26 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
 	if (is_kernel_vaddr(addr) && user) return false;							// 해당 주소가 커널 영역이면 false 리턴
+
+
+	/* Project 3. SG : Stack Growth를 위해 저장된 스택 포인터 가져오기 */
+	void *stack_bottom = pg_round_down(curr->saving_rsp);
+
+	/* Project 3. SG : 스택 포인터 유효성 검사 진행 후 vm_stack_growth 함수 호출 */
+	/* 
+	 * 조건 1.
+	 * 1) 쓰기 가능 여부
+	 * 2) addr이 stack_bottom에서 1 페이지 이내에 존재 하는지 여부
+	 * 3) addr가 USER_STACK 보다 밑에 있는 지 여부
+	 *
+	 */
+	if (write && (stack_bottom - PGSIZE <= addr && (uintptr_t) addr < USER_STACK)) {
+	  /* Allow stack growth writing below single PGSIZE range
+	   * of current stack bottom inferred from stack pointer. */
+	  vm_stack_growth (addr);
+	  return true;
+	}
+
 
 	struct page* page = spt_find_page (spt, addr);
 	if (page == NULL) return false;												// 페이지를 못 찾았을 경우 false 리턴
@@ -242,16 +361,17 @@ vm_do_claim_page (struct page *page) {
 	frame->page = page;												// frame의 page에 page 할당
 	page->frame = frame;											// page의 frame에 frame 할당
 
-	list_push_back (&frame_list, &frame->elem);						// frame 리스트에 추가
-
+	/* Project 3. Swap In/Out : Clock 알고리즘에 따라 clock_elem 확인 후 frame_list에 넣을 위치 정함 */
+	if (clock_elem != NULL)
+		list_insert (clock_elem, &frame->elem);						// clock_elem 존재 시 그 전에 위치 시킴
+	else
+		list_push_back (&frame_list, &frame->elem);					// 없으면 기존과 동일하게 frame 리스트에 추가
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 	/* page의 virtual address를 frame의 physical address로 맵핑하기 위해 page table entry 삽입 */
 	/* supplemental page table - page table - physical address 에서 가운데 page table에 올리는 작업*/
-	if (!pml4_set_page (curr->pml4, page->va, frame->kva, page -> writable))
+	if (!pml4_set_page (curr->pml4, page->va, frame->kva, page->writable))
 		return false;
-
-
 	return swap_in (page, frame->kva);
 }
 

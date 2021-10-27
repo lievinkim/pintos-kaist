@@ -161,10 +161,10 @@ struct thread {
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
 
-	/* Project 3. AP : vm_try_handle_fault를 위한 멤버 추가 */
+	/* Project 3. SG : vm_try_handle_fault를 위한 멤버 추가 */
 	/* Saving rsp into struct thread on the initial transition
 	 * from user to kernel mode. */
-	void *stack_ptr;
+	uintptr_t saving_rsp;
 
 #endif
 
